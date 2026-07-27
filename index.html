@@ -1847,8 +1847,11 @@
       if (!client?.installed) throw new Error(tr("客户端还未安装", "客户端还未安装"));
       state.launchingClients.add(clientId); renderClients(); renderSourceSidebar(); refreshIcons();
       try {
-        const workingDirectory = clientUsesWorkingDirectory(client) ? clientLaunchDirectory() : null;
-        if (clientUsesWorkingDirectory(client) && !workingDirectory) throw new Error(tr("AgentDock 目录不可用", "AgentDock 目录不可用"));
+        let workingDirectory = clientUsesWorkingDirectory(client) ? state.settings?.currentWorkingDirectory || "" : null;
+        if (clientUsesWorkingDirectory(client) && !workingDirectory) {
+          workingDirectory = await chooseWorkingDirectory();
+          if (!workingDirectory) return;
+        }
         const requestId = launchRequestId();
         const result = await call("launch_client", { clientId, workingDirectory, requestId });
         if (result.clientId !== clientId || result.requestId !== requestId) throw new Error(tr("客户端启动响应不匹配，请重试", "客户端启动响应不匹配，请重试"));
@@ -1976,8 +1979,12 @@
       if (!clientUsesWorkingDirectory(client)) {
         return `<section class="client-launchbar" aria-label="${tr("client.launchMethod", "启动方式")}"><div class="launch-context"><span class="launch-context-icon"><i data-lucide="app-window"></i></span><div class="launch-context-copy"><small>${tr("client.launchMethod", "启动方式")}</small><strong>${tr("client.desktopApp", "桌面应用")}</strong><span title="${escapeHtml(client.executable || "")}">${escapeHtml(client.executable || clientName)}</span></div></div><div class="launch-controls">${launchButton}</div></section>`;
       }
-      const current = clientLaunchDirectory();
-      return `<section class="client-launchbar" aria-label="${tr("AgentDock 目录", "AgentDock 目录")}"><div class="launch-context"><span class="launch-context-icon"><i data-lucide="folder-kanban"></i></span><div class="launch-context-copy"><small>${tr("AgentDock 目录", "AgentDock 目录")}</small><div class="workspace-picker ${current ? "" : "empty"}"><strong>${escapeHtml(current ? directoryName(current) : tr("AgentDock 目录不可用", "AgentDock 目录不可用"))}</strong><span>${escapeHtml(current || tr("AgentDock 目录不可用", "AgentDock 目录不可用"))}</span></div></div></div><div class="launch-controls">${launchButton}</div></section>`;
+      const current = state.settings?.currentWorkingDirectory || "";
+      const recent = state.settings?.recentWorkingDirectories || [];
+      const pickerTitle = current ? tr("client.changeProject", "更改当前项目") : tr("client.chooseProject", "选择项目目录");
+      const menuItems = recent.map((path) => `<div class="workspace-menu-row"><button class="workspace-menu-item" data-action="set-working-directory" data-path="${escapeHtml(path)}" title="${escapeHtml(path)}"><i data-lucide="folder"></i><span><strong>${escapeHtml(directoryName(path))}</strong><small>${escapeHtml(path)}</small></span>${path === current ? `<i class="current-mark" data-lucide="check"></i>` : ""}</button><button class="workspace-menu-remove" type="button" data-action="forget-working-directory" data-path="${escapeHtml(path)}" title="${tr("从列表移除", "从列表移除")}" aria-label="${trf("从列表移除 {name}", "从列表移除 {name}", { name: directoryName(path) })}"><i data-lucide="trash-2"></i></button></div>`).join("");
+      const menuLabel = tr("client.projectMenu", "选择最近项目");
+      return `<section class="client-launchbar" aria-label="${tr("client.currentProject", "当前项目")}"><div class="launch-context"><span class="launch-context-icon"><i data-lucide="folder-kanban"></i></span><div class="launch-context-copy"><small>${tr("client.currentProject", "当前项目")}</small><button class="workspace-picker ${current ? "" : "empty"}" data-action="choose-working-directory" title="${pickerTitle}"><strong>${escapeHtml(current ? directoryName(current) : tr("client.chooseProject", "选择项目目录"))}</strong><span>${escapeHtml(current || tr("client.noProject", "尚未选择项目"))}</span></button></div></div><div class="launch-controls"><div class="workspace-menu ${state.workspaceMenuOpen ? "open" : ""}"><button class="workspace-menu-trigger" type="button" data-action="toggle-workspace-menu" title="${menuLabel}" aria-label="${menuLabel}" aria-expanded="${state.workspaceMenuOpen}"><i data-lucide="chevron-down"></i></button><div class="workspace-menu-popover" ${state.workspaceMenuOpen ? "" : "hidden"}>${menuItems ? `<span class="workspace-menu-label">${tr("client.recentProjects", "最近项目")}</span>${menuItems}<div class="workspace-menu-rule"></div>` : ""}<button class="workspace-menu-item" data-action="choose-working-directory"><i data-lucide="folder-search-2"></i><span><strong>${tr("client.chooseAnotherProject", "选择其他目录")}</strong></span></button></div></div>${launchButton}</div></section>`;
     }
 
     function renderClientStage() {
@@ -2196,9 +2203,6 @@
       if (source === "agentdock") return "";
       const root = skillStorageRootDir();
       return root ? `${root.replace(/[\\/]$/, "")}/skills` : "";
-    }
-    function clientLaunchDirectory() {
-      return cleanDisplayPath(state.status?.dataDir || "");
     }
     function skillStorageRootDir() {
       if (state.settings?.skillStorageLocation === "unified") {
