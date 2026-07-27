@@ -1033,6 +1033,7 @@
       openclaw: { name: "OpenClaw", short: "OW", logo: "/client-logos/openclaw.svg", autoInstall: true },
       hermes: { name: "Hermes", short: "HM", logo: "/client-logos/hermes.png", autoInstall: true }
     };
+    const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
     const APP_ORDER = Object.keys(APP_META);
     const AGENTS_SKILL_CLIENTS = new Set(["codex", "antigravity", "opencode"]);
     const SKILLS_CLI_CLIENTS = new Set(["claude-code", "codex", "antigravity", "opencode", "openclaw", "hermes"]);
@@ -1181,7 +1182,7 @@
       ],
       antigravity: [
         ...COMMON_PRESETS,
-        { id: "google-official", name: "Google Official", short: "GO", type: "official", baseUrl: "", model: "gemini-3.1-pro", website: "https://ai.google.dev", format: "gemini", category: "official" },
+        { id: "google-official", name: "Google Official", short: "GO", type: "official", baseUrl: "", model: DEFAULT_GEMINI_MODEL, website: "https://ai.google.dev", format: "gemini", category: "official" },
         { id: "shengsuanyun", name: "Shengsuanyun", short: "SS", type: "gemini", baseUrl: "https://router.shengsuanyun.com/api", model: "google/gemini-3.5-flash", website: "https://www.shengsuanyun.com", format: "gemini", category: "aggregator" },
         { id: "unity2", name: "Unity2.ai", short: "U2", type: "gemini", baseUrl: "https://api.unity2.ai", model: "gemini-3.1-pro", website: "https://unity2.ai", format: "gemini", category: "aggregator" },
         { id: "subrouter", name: "SubRouter", short: "SR", type: "gemini", baseUrl: "https://subrouter.ai/v1beta", model: "gemini-3.5-flash", website: "https://subrouter.ai", format: "gemini", category: "aggregator" },
@@ -1258,14 +1259,14 @@
       const cached = JSON.parse(localStorage.getItem(STARTUP_CACHE_KEY) || "null");
       if (cached?.version === 3 && cached.data && Date.now() - Number(cached.savedAt || 0) < 30 * 24 * 60 * 60 * 1000) startupCache = cached.data;
     } catch {}
-    const defaultSettings = { language: document.documentElement.lang || "zh-CN", theme: cachedTheme, launchOnStartup: false, silentStartup: false, minimizeToTrayOnClose: false, preferredTerminal: "terminal", visibleClients: [...APP_ORDER], clientOrder: [...APP_ORDER], currentWorkingDirectory: "", recentWorkingDirectories: [], skillStorageLocation: "agentdock", skillSyncMethod: "copy", skillApiProxyEnabled: true };
+    const defaultSettings = { language: document.documentElement.lang || "zh-CN", theme: cachedTheme, ccSwitchInitialCheckCompleted: false, launchOnStartup: false, silentStartup: false, minimizeToTrayOnClose: false, preferredTerminal: "terminal", visibleClients: [...APP_ORDER], clientOrder: [...APP_ORDER], currentWorkingDirectory: "", recentWorkingDirectories: [], skillStorageLocation: "agentdock", skillSyncMethod: "copy", skillApiProxyEnabled: true };
 
     const state = {
       desktop: Boolean(window.__TAURI_INTERNALS__), status: startupCache?.status || null, settings: { ...defaultSettings, ...(startupCache?.settings || {}), language: defaultSettings.language, theme: defaultSettings.theme }, ready: startupCache?.ready || null, providers: startupCache?.providers || [], skills: startupCache?.skills || [], mcpServers: startupCache?.mcpServers || [], softwareCatalog: startupCache?.softwareCatalog || [], appUpdate: null, appUpdateChecking: false, appUpdateInstalling: false, backgroundRefreshing: false,
       usageStats: null, usageDays: 7, trendMetric: "totalTokens", breakdown: "client",
       activeView: "clients", activeClient: "codex", contextQuery: "", softwareFilter: "all", skillFilter: "all", inspectingSkillId: "", skillDetailOpen: false, diagnosticFilter: "all",
       skillsDiscovery: null, skillsDiscoveryView: "all-time", skillsDiscoveryQuery: "", skillsDiscoveryLoading: false, skillsDiscoveryPages: {},
-      inFlightOperations: new Set(), clientOperations: new Map(), launchingClients: new Set(), workspaceMenuOpen: false, providerModelMenuOpen: false, providerModelOptions: [], providerModelRequest: 0, settingsRevision: 0, settingsSaveChain: Promise.resolve(), logs: [], diagnostics: null, diagnosticRunning: false, ccSwitchImport: null, ccSwitchImportResult: null, ccSwitchImportChecking: false, editingProviderId: null, selectedPresetId: "custom", providerFormDirty: false, providerSecretRequest: 0, editingMcpId: null, selectedMcpPreset: "custom", inspectingMcpId: null, mcpToolsResult: null, mcpToolsError: "", activeMcpToolName: "", mcpToolsRequest: 0, configManuallyEdited: false, configImportRequest: 0, confirmResolve: null, skillInstallDraft: null
+      inFlightOperations: new Set(), clientOperations: new Map(), launchingClients: new Set(), workspaceMenuOpen: false, providerModelMenuOpen: false, providerModelOptions: [], providerModelRequest: 0, providerReadyRequest: 0, settingsRevision: 0, settingsSaveChain: Promise.resolve(), logs: [], diagnostics: null, diagnosticRunning: false, ccSwitchImport: null, ccSwitchImportResult: null, ccSwitchImportChecking: false, editingProviderId: null, selectedPresetId: "custom", providerFormDirty: false, providerSecretRequest: 0, editingMcpId: null, selectedMcpPreset: "custom", inspectingMcpId: null, mcpToolsResult: null, mcpToolsError: "", activeMcpToolName: "", mcpToolsRequest: 0, configManuallyEdited: false, configImportRequest: 0, confirmResolve: null, skillInstallDraft: null
     };
     try {
       const cachedTheme = localStorage.getItem("agentdock-theme") || "system";
@@ -1394,7 +1395,7 @@
       }
       if (command === "parse_provider_config") return mockParseProviderConfig(args.appId, args.content);
       if (command === "fetch_provider_models") {
-        const models = args.appId === "codex" ? ["gpt-5.6-sol", "gpt-5.5", "glm-5.2"] : args.appId === "grok" ? ["grok-4.5", "grok-build", "grok-code-fast-1", "grok-4.1-fast"] : args.appId.startsWith("claude") ? ["claude-sonnet-5", "claude-opus-4-8", "glm-5.2"] : args.appId === "antigravity" ? ["gemini-3.5-pro", "gemini-3.5-flash"] : ["gpt-5.6-sol", "deepseek-chat", "glm-5.2"];
+        const models = args.appId === "codex" ? ["gpt-5.6-sol", "gpt-5.5", "glm-5.2"] : args.appId === "grok" ? ["grok-4.5", "grok-build", "grok-code-fast-1", "grok-4.1-fast"] : args.appId.startsWith("claude") ? ["claude-sonnet-5", "claude-opus-4-8", "glm-5.2"] : args.appId === "antigravity" ? [DEFAULT_GEMINI_MODEL, "gemini-3.5-pro", "gemini-3.5-flash"] : ["gpt-5.6-sol", "deepseek-chat", "glm-5.2"];
         return { models, source: args.baseUrl ? "供应商实际返回" : "客户端推荐", providerSupplied: Boolean(args.baseUrl) };
       }
       if (command === "run_ready_check") {
@@ -1614,6 +1615,22 @@
       } catch {}
     }
 
+    function refreshProviderReadyState() {
+      const request = ++state.providerReadyRequest;
+      void call("run_ready_check").then((ready) => {
+        if (request !== state.providerReadyRequest) return;
+        state.ready = ready; persistStartupCache(); renderHeader(); renderSourceSidebar(); refreshIcons();
+      }).catch((error) => addLog("warn", errorText(error)));
+    }
+
+    function commitActiveProvider(provider, appId) {
+      const remaining = state.providers.filter((item) => item.id !== provider.id).map((item) => {
+        const currentApps = item.activeApps || []; const activeApps = currentApps.filter((app) => app !== appId);
+        return activeApps.length === currentApps.length ? item : { ...item, activeApps, active: activeApps.length > 0 };
+      });
+      state.providers = [provider, ...remaining]; state.diagnostics = null; persistStartupCache(); renderAll(); refreshProviderReadyState();
+    }
+
     async function loadAll({ quiet = false } = {}) {
       state.backgroundRefreshing = true; renderHeader(); renderClients(); renderSourceSidebar(); refreshIcons();
       try {
@@ -1669,20 +1686,25 @@
       try { if (fingerprint) localStorage.setItem(CC_SWITCH_IMPORT_DISMISS_KEY, fingerprint); } catch {}
     }
     function ccSwitchInitialCheckCompleted() {
+      if (state.settings?.ccSwitchInitialCheckCompleted) return true;
+      if (state.providers.some((provider) => provider.id?.startsWith("cc-switch-"))) return true;
       try {
         if (localStorage.getItem(CC_SWITCH_INITIAL_CHECK_KEY) === "true") return true;
-        if (localStorage.getItem(CC_SWITCH_IMPORT_DISMISS_KEY)) { rememberCcSwitchInitialCheck(); return true; }
+        if (localStorage.getItem(CC_SWITCH_IMPORT_DISMISS_KEY)) return true;
         return false;
       } catch { return false; }
     }
-    function rememberCcSwitchInitialCheck() {
+    async function rememberCcSwitchInitialCheck() {
       try { localStorage.setItem(CC_SWITCH_INITIAL_CHECK_KEY, "true"); } catch {}
+      if (state.settings && !state.settings.ccSwitchInitialCheckCompleted) {
+        await queueSettingsSave({ ccSwitchInitialCheckCompleted: true });
+      }
     }
     async function checkCcSwitchImport({ force = false } = {}) {
       if (state.ccSwitchImportChecking) return;
       state.ccSwitchImportChecking = true; renderCcSwitchImportStatus();
       try {
-        const detection = await call("detect_cc_switch_config"); rememberCcSwitchInitialCheck(); state.ccSwitchImport = detection; renderCcSwitchImportStatus();
+        const detection = await call("detect_cc_switch_config"); await rememberCcSwitchInitialCheck(); state.ccSwitchImport = detection; renderCcSwitchImportStatus();
         if (!detection.available) { if (force) notify(tr("未检测到 cc-switch 供应商配置", "未检测到 cc-switch 供应商配置")); return; }
         if (!force && ccSwitchImportWasDismissed(detection.fingerprint)) return;
         const apps = ccSwitchImportApps(detection);
@@ -2628,7 +2650,7 @@
     }
     function generatedProviderConfig() {
       const form = document.getElementById("provider-form"); const app = state.activeClient; const official = configValue(form, "provider-type") === "official";
-      const name = configValue(form, "provider-name", "custom"); const baseUrl = configValue(form, "provider-base-url"); const model = configValue(form, "provider-model", app === "antigravity" ? "gemini-3.5-pro" : app === "grok" ? "grok-4.5" : app.startsWith("claude") ? "claude-sonnet-5" : "gpt-5.6-sol");
+      const name = configValue(form, "provider-name", "custom"); const baseUrl = configValue(form, "provider-base-url"); const model = configValue(form, "provider-model", app === "antigravity" ? DEFAULT_GEMINI_MODEL : app === "grok" ? "grok-4.5" : app.startsWith("claude") ? "claude-sonnet-5" : "gpt-5.6-sol");
       if (app === "codex") {
         const auth = official ? {} : { OPENAI_API_KEY: configKeyPlaceholder };
         const wireApi = configValue(form, "provider-api-format") === "chat-completions" ? "chat" : "responses";
@@ -2856,14 +2878,14 @@
       const form = document.getElementById("provider-form"); const official = form.elements["provider-type"].value === "official";
       if (!form.reportValidity()) throw new Error(official ? tr("请填写供应商名称", "请填写供应商名称") : tr("请完整填写供应商名称、请求地址和 API Key", "请完整填写供应商名称、请求地址和 API Key"));
       const old = state.providers.find((provider) => provider.id === state.editingProviderId); const preset = findPreset(form.elements["provider-preset-id"].value); const isClaude = state.activeClient.startsWith("claude"); const model = isClaude ? claudeInputModel("advanced-claude-fallback", "advanced-claude-fallback-1m") : form.elements["provider-model"].value.trim();
-      return { id: form.elements["provider-id"].value || null, name: form.elements["provider-name"].value.trim(), notes: form.elements["provider-notes"].value.trim(), websiteUrl: old?.websiteUrl || preset?.website || "", presetId: form.elements["provider-preset-id"].value, providerType: form.elements["provider-type"].value, baseUrl: form.elements["provider-base-url"].value.trim(), apiKey: form.elements["provider-api-key"].value.trim() || null, apiFormat: form.elements["provider-api-format"].value, settingsConfig: collectProviderSettingsConfig(), enabledApps: [state.activeClient], activeApps: [...new Set([...(old?.activeApps || []).filter((app) => app !== state.activeClient), state.activeClient])], codexModel: state.activeClient !== "antigravity" ? model : form.elements["advanced-codex-model"].value.trim(), geminiModel: state.activeClient === "antigravity" ? model : old?.geminiModel || "gemini-3.5-pro", claudeSonnetModel: claudeInputModel("advanced-claude-sonnet", "advanced-claude-sonnet-1m"), claudeHaikuModel: configValue(form, "advanced-claude-haiku"), claudeOpusModel: claudeInputModel("advanced-claude-opus", "advanced-claude-opus-1m"), active: true };
+      return { id: form.elements["provider-id"].value || null, name: form.elements["provider-name"].value.trim(), notes: form.elements["provider-notes"].value.trim(), websiteUrl: old?.websiteUrl || preset?.website || "", presetId: form.elements["provider-preset-id"].value, providerType: form.elements["provider-type"].value, baseUrl: form.elements["provider-base-url"].value.trim(), apiKey: form.elements["provider-api-key"].value.trim() || null, apiFormat: form.elements["provider-api-format"].value, settingsConfig: collectProviderSettingsConfig(), enabledApps: [state.activeClient], activeApps: [...new Set([...(old?.activeApps || []).filter((app) => app !== state.activeClient), state.activeClient])], codexModel: state.activeClient !== "antigravity" ? model : form.elements["advanced-codex-model"].value.trim(), geminiModel: state.activeClient === "antigravity" ? model : old?.geminiModel || DEFAULT_GEMINI_MODEL, claudeSonnetModel: claudeInputModel("advanced-claude-sonnet", "advanced-claude-sonnet-1m"), claudeHaikuModel: configValue(form, "advanced-claude-haiku"), claudeOpusModel: claudeInputModel("advanced-claude-opus", "advanced-claude-opus-1m"), active: true };
     }
     async function saveProvider() {
-      hideProviderError(); const provider = await call("save_provider", { input: providerInput() });
-      await call("activate_provider", { providerId: provider.id, appId: state.activeClient });
-      const applied = await call("apply_provider_config", { providerId: provider.id, appId: state.activeClient });
-      addLog("ok", trf("provider.appliedFiles", "{client} 已使用供应商 {provider}，写入 {count} 个配置文件", { client: clientMeta(state.activeClient).name, provider: provider.name, count: applied.writtenFiles.length }));
-      notify(trf("provider.added", "{name} 已添加并启用", { name: provider.name })); closeProviderEditor(); await loadAll({ quiet: true });
+      hideProviderError(); const appId = state.activeClient; const saved = await call("save_provider", { input: providerInput() });
+      const provider = await call("activate_provider", { providerId: saved.id, appId });
+      const applied = await call("apply_provider_config", { providerId: provider.id, appId });
+      addLog("ok", trf("provider.appliedFiles", "{client} 已使用供应商 {provider}，写入 {count} 个配置文件", { client: clientMeta(appId).name, provider: provider.name, count: applied.writtenFiles.length }));
+      notify(trf("provider.added", "{name} 已添加并启用", { name: provider.name })); closeProviderEditor(); commitActiveProvider(provider, appId);
     }
 
     function mcpSchemaType(schema = {}) {
@@ -3044,9 +3066,9 @@
       if (action === "reset-provider-config") { state.providerFormDirty = true; regenerateProviderConfig(); notify(tr("action.configRegenerated", "配置文件已从表单重新生成")); return; }
       if (action === "save-provider") return withBusy(button, saveProvider);
       if (action === "edit-provider") return openProviderEditor(state.providers.find((provider) => provider.id === id));
-      if (action === "activate-provider") return withBusy(button, async () => { const provider = await call("activate_provider", { providerId: id, appId: state.activeClient }); await call("apply_provider_config", { providerId: id, appId: state.activeClient }); addLog("ok", trf("action.applied", "{provider} 已应用到 {client}", { provider: provider.name, client: clientMeta(state.activeClient).name })); notify(trf("action.using", "正在使用 {name}", { name: provider.name })); await loadAll({ quiet: true }); });
+      if (action === "activate-provider") return withBusy(button, async () => { const appId = state.activeClient; const provider = await call("activate_provider", { providerId: id, appId }); await call("apply_provider_config", { providerId: id, appId }); addLog("ok", trf("action.applied", "{provider} 已应用到 {client}", { provider: provider.name, client: clientMeta(appId).name })); notify(trf("action.using", "正在使用 {name}", { name: provider.name })); commitActiveProvider(provider, appId); });
       if (action === "test-provider") return withBusy(button, async () => { const result = await call("test_provider", { providerId: id }); addLog(result.ok ? "ok" : "warn", `${result.message} (${result.latencyMs}ms)`); notify(tr(result.message, result.message), result.ok ? "ok" : "error"); });
-      if (action === "delete-provider") { const provider = state.providers.find((item) => item.id === id); const name = provider?.name || id; if (!await confirmAction(tr("confirm.deleteProvider", "删除供应商"), trf("confirm.deleteProviderMessage", "确定删除“{name}”？已写入客户端的配置不会自动清空。", { name }))) return; return withBusy(button, async () => { const result = await call("delete_provider", { providerId: id }); state.providers = state.providers.filter((item) => item.id !== id); state.diagnostics = null; persistStartupCache(); renderAll(); addLog("warn", result.message); notify(trf("action.providerDeleted", "{name} 已删除", { name })); void call("run_ready_check").then((ready) => { state.ready = ready; persistStartupCache(); renderHeader(); renderSourceSidebar(); refreshIcons(); }).catch((error) => addLog("warn", errorText(error))); }); }
+      if (action === "delete-provider") { const provider = state.providers.find((item) => item.id === id); const name = provider?.name || id; if (!await confirmAction(tr("confirm.deleteProvider", "删除供应商"), trf("confirm.deleteProviderMessage", "确定删除“{name}”？已写入客户端的配置不会自动清空。", { name }))) return; return withBusy(button, async () => { const result = await call("delete_provider", { providerId: id }); state.providers = state.providers.filter((item) => item.id !== id); state.diagnostics = null; persistStartupCache(); renderAll(); addLog("warn", result.message); notify(trf("action.providerDeleted", "{name} 已删除", { name })); refreshProviderReadyState(); }); }
       if (action === "install-skill") return withBusy(button, async () => { const current = state.skills.find((item) => item.id === id); const skill = await call("install_skill", { input: { id: current?.name || id, apps: current?.apps?.length ? current.apps : ["codex"] } }); await refreshInstalledSkills(); notify(trf("action.installed", "{name} 已安装", { name: skill.name })); });
       if (action === "install-discovered-skill") return openSkillInstallDialog(id, button.dataset.skillId || "");
       if (action === "quick-install-skill") return withBusy(button, async () => { const clientId = button.dataset.client || state.activeClient; const skill = await call("install_skill", { input: { id, apps: [clientId] } }); state.inspectingSkillId = skill.id; await refreshInstalledSkills(); notify(trf("action.installed", "{name} 已安装", { name: `${skill.name} → ${clientMeta(clientId).name}` })); });
@@ -3175,7 +3197,7 @@
     async function boot() {
       applyAppearance(); renderAll(); addLog("info", state.desktop ? "正在连接 AgentDock 本机服务" : "已进入浏览器交互预览模式");
       await new Promise((resolve) => requestAnimationFrame(() => resolve()));
-      try { await loadAll({ quiet: true }); addLog("ok", `AgentDock ${state.status.appVersion} 已启动`); startAppUpdateChecks(); if (!ccSwitchInitialCheckCompleted()) { rememberCcSwitchInitialCheck(); void checkCcSwitchImport(); } }
+      try { await loadAll({ quiet: true }); addLog("ok", `AgentDock ${state.status.appVersion} 已启动`); startAppUpdateChecks(); const ccSwitchChecked = ccSwitchInitialCheckCompleted(); await rememberCcSwitchInitialCheck(); if (!ccSwitchChecked) void checkCcSwitchImport(); }
       catch (error) { const message = errorText(error); document.getElementById("backend-state").className = "badge danger"; document.getElementById("backend-state").innerHTML = `<i data-lucide="circle-x"></i>${tr("本机服务连接失败", "本机服务连接失败")}`; addLog("error", message); notify(message, "error"); refreshIcons(); }
     }
     boot();
