@@ -3,6 +3,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use directories::ProjectDirs;
 use flate2::read::GzDecoder;
 use futures::future::join_all;
+use hmac::{Hmac, Mac};
 use rmcp::{
     model::Tool,
     transport::{
@@ -36,9 +37,12 @@ use tauri::{
 static TRAY_AVAILABLE: AtomicBool = AtomicBool::new(false);
 static CLIENT_DETECTION_CACHE: OnceLock<Mutex<Option<(Instant, Vec<ClientStatus>)>>> =
     OnceLock::new();
+static SKILLS_WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 const MANAGED_CLI_MARKER: &str = "AgentDock managed CLI shim";
 const MANAGED_PATH_BLOCK_START: &str = "# >>> AgentDock CLI >>>";
 const MANAGED_PATH_BLOCK_END: &str = "# <<< AgentDock CLI <<<";
+const SKILLS_CLI_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
+const SKILLS_CLI_TIMEOUT_MESSAGE: &str = "Skills CLI 执行超时（3 分钟），请检查网络或 npm 状态";
 use time::{format_description::well_known::Rfc3339, Duration, OffsetDateTime};
 
 #[derive(Debug, Serialize)]
@@ -48,6 +52,7 @@ pub struct DesktopStatus {
     platform: String,
     data_dir: String,
     config_dir: String,
+    home_dir: String,
     managed_runtime_ready: bool,
     clients: Vec<ClientStatus>,
 }
@@ -102,6 +107,7 @@ pub struct AppSettings {
     recent_working_directories: Vec<String>,
     skill_storage_location: String,
     skill_sync_method: String,
+    skill_api_proxy_enabled: bool,
 }
 
 impl Default for AppSettings {
@@ -124,6 +130,7 @@ impl Default for AppSettings {
             recent_working_directories: Vec::new(),
             skill_storage_location: "agentdock".to_string(),
             skill_sync_method: "copy".to_string(),
+            skill_api_proxy_enabled: true,
         }
     }
 }
@@ -417,14 +424,77 @@ pub struct SkillRecord {
     updated_at: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDirectoryItem {
+    id: String,
+    name: String,
+    description: String,
+    package: String,
+    skill_id: String,
+    owner: String,
+    repository: String,
+    url: String,
+    score: Option<f64>,
+    downloads: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDiscoveryResult {
+    mode: String,
+    query: String,
+    view: String,
+    items: Vec<SkillDirectoryItem>,
+    sections: Vec<SkillDiscoverySection>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillDiscoverySection {
+    id: String,
+    title: String,
+    items: Vec<SkillDirectoryItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct SkillsDiscoveryCache {
+    entries: BTreeMap<String, SkillsDiscoveryCacheEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillsDiscoveryCacheEntry {
+    saved_at: i64,
+    result: SkillDiscoveryResult,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillInstallInput {
     id: String,
+    skill_id: Option<String>,
     name: Option<String>,
     description: Option<String>,
     source: Option<String>,
     apps: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SkillsCliListItem {
+    name: String,
+    path: String,
+    scope: String,
+    #[serde(default)]
+    agents: Vec<String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct SkillsCliCommand {
+    program: String,
+    args: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -572,8 +642,11 @@ fn desktop_status() -> Result<DesktopStatus, String> {
     Ok(DesktopStatus {
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         platform: env::consts::OS.to_string(),
-        data_dir: dirs.data_dir.display().to_string(),
-        config_dir: dirs.config_dir.display().to_string(),
+        data_dir: display_path(&dirs.data_dir),
+        config_dir: display_path(&dirs.config_dir),
+        home_dir: dirs_home()
+            .map(|path| display_path(&path))
+            .unwrap_or_default(),
         managed_runtime_ready: dirs.runtime_dir.exists(),
         clients: refresh_client_detection(),
     })
@@ -4380,9 +4453,7 @@ fn launch_client(
         launch_desktop_client(Path::new(executable))?;
     }
 
-    let working_directory_display = working_directory
-        .as_ref()
-        .map(|path| path.display().to_string());
+    let working_directory_display = working_directory.as_ref().map(|path| display_path(path));
 
     Ok(LaunchClientResult {
         launched: true,
@@ -5131,10 +5202,23 @@ fn powershell_quote(value: &str) -> String {
 }
 
 #[tauri::command]
-fn open_path(path: String) -> Result<OperationResult, String> {
+fn open_path(path: String, exact: Option<bool>) -> Result<OperationResult, String> {
     let requested = PathBuf::from(path);
-    let target = existing_directory_for_path(&requested)
-        .ok_or_else(|| "无法找到可打开的配置目录".to_string())?;
+    let target = if exact.unwrap_or(false) {
+        if requested.is_dir() {
+            requested.clone()
+        } else if requested.is_file() {
+            requested
+                .parent()
+                .ok_or_else(|| "无法找到可打开的目录".to_string())?
+                .to_path_buf()
+        } else {
+            return Err(format!("目录不存在：{}", display_path(&requested)));
+        }
+    } else {
+        existing_directory_for_path(&requested)
+            .ok_or_else(|| "无法找到可打开的配置目录".to_string())?
+    };
 
     #[cfg(target_os = "macos")]
     let mut command = {
@@ -5214,7 +5298,27 @@ async fn list_skills() -> Result<Vec<SkillRecord>, String> {
 fn list_skills_inner() -> Result<Vec<SkillRecord>, String> {
     let dirs = agentdock_dirs()?;
     ensure_dirs(&dirs)?;
-    let path = skills_path(&dirs);
+    list_skill_records_from_sources(&dirs)
+}
+
+async fn run_skill_write<T, F>(operation: F) -> Result<T, String>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let lock = SKILLS_WRITE_LOCK.get_or_init(|| Mutex::new(()));
+        let _guard = lock
+            .lock()
+            .map_err(|_| "Skills 写任务锁已损坏".to_string())?;
+        operation()
+    })
+    .await
+    .map_err(|error| format!("Skills 写任务失败: {}", error))?
+}
+
+fn list_legacy_skills_inner(dirs: &AgentDockDirs) -> Result<Vec<SkillRecord>, String> {
+    let path = skills_path(dirs);
     let mut skills: Vec<SkillRecord> = read_json_or_seed(&path, default_skills())?;
     let mut migrated = false;
     for skill in &mut skills {
@@ -5226,14 +5330,230 @@ fn list_skills_inner() -> Result<Vec<SkillRecord>, String> {
     Ok(skills)
 }
 
+fn list_skill_records_from_sources(dirs: &AgentDockDirs) -> Result<Vec<SkillRecord>, String> {
+    let mut records = Vec::new();
+    records.extend(list_skill_records_for_source(dirs, "global")?);
+    records.extend(list_skill_records_for_source(dirs, "agentdock")?);
+    records.sort_by(|a, b| {
+        source_rank(&a.source)
+            .cmp(&source_rank(&b.source))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    Ok(records)
+}
+
+fn list_skill_records_for_source(
+    dirs: &AgentDockDirs,
+    source: &str,
+) -> Result<Vec<SkillRecord>, String> {
+    let (command, cwd) = match source {
+        "global" => (
+            skills_cli_list_global_command(),
+            dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?,
+        ),
+        "agentdock" => (skills_cli_list_project_command(), dirs.data_dir.clone()),
+        _ => return Err(format!("不支持的 Skills 来源: {}", source)),
+    };
+    let output = run_skills_cli(command, &cwd)?;
+    Ok(skills_records_from_cli_items_for_source(
+        parse_skills_cli_list_items(&output)?,
+        source,
+    ))
+}
+
+fn scan_skill_directory(
+    root: &Path,
+    source: &str,
+    metadata: &BTreeMap<String, SkillRecord>,
+    fallback_apps: &[&str],
+    now: &str,
+) -> Result<Vec<SkillRecord>, String> {
+    if !root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut records = Vec::new();
+    for entry in fs::read_dir(root).map_err(|err| format!("读取 Skills 目录失败: {}", err))? {
+        let entry = entry.map_err(|err| format!("读取 Skill 目录项失败: {}", err))?;
+        let path = entry.path();
+        if !path.is_dir() || !path.join("SKILL.md").is_file() {
+            continue;
+        }
+        let dir_name = entry.file_name().to_string_lossy().to_string();
+        let id = slugify(&dir_name);
+        let existing = metadata.get(&id);
+        let (name, _description) = read_skill_markdown_summary(&path.join("SKILL.md"))
+            .unwrap_or_else(|| {
+                (
+                    existing.map(|skill| skill.name.clone()).unwrap_or(dir_name),
+                    String::new(),
+                )
+            });
+        let apps = if source == "agentdock" {
+            existing
+                .map(|skill| skill.apps.clone())
+                .filter(|apps| !apps.is_empty())
+                .unwrap_or_else(|| fallback_apps.iter().map(|app| (*app).to_string()).collect())
+        } else {
+            fallback_apps.iter().map(|app| (*app).to_string()).collect()
+        };
+        records.push(SkillRecord {
+            id: sourced_skill_id(source, &id),
+            name,
+            description: path.display().to_string(),
+            source: source.to_string(),
+            installed: true,
+            apps,
+            updated_at: now.to_string(),
+        });
+    }
+    Ok(records)
+}
+
+fn read_skill_markdown_summary(path: &Path) -> Option<(String, String)> {
+    let raw = fs::read_to_string(path).ok()?;
+    let mut name = None;
+    let mut description = None;
+    if raw.trim_start().starts_with("---") {
+        for line in raw.lines().skip(1) {
+            let trimmed = line.trim();
+            if trimmed == "---" {
+                break;
+            }
+            if let Some(value) = trimmed.strip_prefix("name:") {
+                name = Some(value.trim().trim_matches('"').to_string());
+            } else if let Some(value) = trimmed.strip_prefix("description:") {
+                description = Some(value.trim().trim_matches('"').to_string());
+            }
+        }
+    }
+    let name = name.filter(|value| !value.is_empty())?;
+    Some((name, description.unwrap_or_default()))
+}
+
+fn sourced_skill_id(source: &str, id: &str) -> String {
+    format!("{}::{}", source, id)
+}
+
+fn split_sourced_skill_id(value: &str) -> (&str, &str) {
+    value.split_once("::").unwrap_or(("agentdock", value))
+}
+
+fn skills_cli_remove_target(skill: &SkillRecord) -> String {
+    Path::new(&skill.description)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| split_sourced_skill_id(&skill.id).1.to_string())
+}
+
+fn skill_source_settings(settings: &AppSettings, source: &str) -> AppSettings {
+    let mut scoped = settings.clone();
+    scoped.skill_storage_location = match source {
+        "global" => "global".to_string(),
+        "unified" => "unified".to_string(),
+        _ => "agentdock".to_string(),
+    };
+    scoped
+}
+
+fn source_rank(source: &str) -> u8 {
+    match source {
+        "global" => 0,
+        "agentdock" => 1,
+        _ => 2,
+    }
+}
+
+fn parse_skills_cli_list_items(output: &str) -> Result<Vec<SkillsCliListItem>, String> {
+    serde_json::from_str(output).map_err(|err| format!("解析 Skills CLI 输出失败: {}", err))
+}
+
+fn skills_records_from_cli_items(items: Vec<SkillsCliListItem>) -> Vec<SkillRecord> {
+    skills_records_from_cli_items_for_source(items, "")
+}
+
+fn skills_records_from_cli_items_for_source(
+    items: Vec<SkillsCliListItem>,
+    source_override: &str,
+) -> Vec<SkillRecord> {
+    let mut seen = HashSet::new();
+    items
+        .into_iter()
+        .filter_map(|item| {
+            let id = slugify(&item.name);
+            let source = if source_override.is_empty() {
+                item.scope.clone()
+            } else {
+                source_override.to_string()
+            };
+            if !seen.insert((source.clone(), id.clone())) {
+                return None;
+            }
+            Some(SkillRecord {
+                id: sourced_skill_id(&source, &id),
+                name: item.name,
+                description: item.path,
+                source,
+                installed: true,
+                apps: normalize_app_ids(item.agents),
+                updated_at: now_rfc3339(),
+            })
+        })
+        .collect()
+}
+
 #[tauri::command]
-fn install_skill(input: SkillInstallInput) -> Result<SkillRecord, String> {
+async fn install_skill(input: SkillInstallInput) -> Result<SkillRecord, String> {
+    run_skill_write(move || install_skill_inner(input)).await
+}
+
+fn install_skill_inner(input: SkillInstallInput) -> Result<SkillRecord, String> {
     let dirs = agentdock_dirs()?;
     ensure_dirs(&dirs)?;
-    let mut skills = list_skills_inner()?;
+    let settings = read_app_settings(&dirs)?;
+    if skills_uses_legacy_storage(&settings) {
+        return install_legacy_skill(&dirs, input);
+    }
+    let raw_skill_id = split_sourced_skill_id(&input.id).1.to_string();
+    let installed_apps = input
+        .apps
+        .as_deref()
+        .map(skills_cli_supported_apps)
+        .unwrap_or_default();
+    if input.apps.is_some() && installed_apps.is_empty() {
+        return Err("所选客户端均不受 Skills CLI 支持".to_string());
+    }
+    let cwd = skills_cli_working_directory(&settings)?
+        .ok_or_else(|| "请先选择项目目录，再安装 project 作用域的 Skill".to_string())?;
+    run_skills_cli(
+        skills_cli_add_command(
+            &raw_skill_id,
+            input.skill_id.as_deref(),
+            &settings,
+            Some(installed_apps.as_slice()),
+        ),
+        &cwd,
+    )?;
+    Ok(SkillRecord {
+        id: slugify(&raw_skill_id),
+        name: raw_skill_id,
+        description: cwd.display().to_string(),
+        source: settings.skill_storage_location,
+        installed: true,
+        apps: installed_apps,
+        updated_at: now_rfc3339(),
+    })
+}
+
+fn install_legacy_skill(
+    dirs: &AgentDockDirs,
+    input: SkillInstallInput,
+) -> Result<SkillRecord, String> {
+    let mut skills = list_legacy_skills_inner(dirs)?;
     let now = now_rfc3339();
     let id = slugify(&input.id);
-    let skill_dir = active_skills_dir(&dirs)?.join(&id);
+    let skill_dir = active_skills_dir(dirs)?.join(&id);
     fs::create_dir_all(&skill_dir).map_err(|err| format!("创建 Skill 目录失败: {}", err))?;
     fs::write(
         skill_dir.join("SKILL.md"),
@@ -5264,18 +5584,35 @@ fn install_skill(input: SkillInstallInput) -> Result<SkillRecord, String> {
 
     skills.retain(|skill| skill.id != id);
     skills.push(record.clone());
-    write_json(&skills_path(&dirs), &skills)?;
+    write_json(&skills_path(dirs), &skills)?;
     Ok(record)
 }
 
 #[tauri::command]
-fn toggle_skill_app(skill_id: String, app: String, enabled: bool) -> Result<SkillRecord, String> {
+async fn toggle_skill_app(
+    skill_id: String,
+    app: String,
+    enabled: bool,
+) -> Result<SkillRecord, String> {
+    run_skill_write(move || toggle_skill_app_inner(skill_id, app, enabled)).await
+}
+
+fn toggle_skill_app_inner(
+    skill_id: String,
+    app: String,
+    enabled: bool,
+) -> Result<SkillRecord, String> {
     let dirs = agentdock_dirs()?;
     ensure_dirs(&dirs)?;
-    let mut skills = list_skills_inner()?;
+    let settings = read_app_settings(&dirs)?;
+    if !skills_uses_legacy_storage(&settings) {
+        return toggle_cli_skill_app(skill_id, app, enabled, &settings);
+    }
+    let mut skills = list_legacy_skills_inner(&dirs)?;
+    let (_, raw_skill_id) = split_sourced_skill_id(&skill_id);
     let skill = skills
         .iter_mut()
-        .find(|skill| skill.id == skill_id)
+        .find(|skill| skill.id == raw_skill_id)
         .ok_or_else(|| "未找到 Skill".to_string())?;
 
     if enabled && !skill.apps.iter().any(|item| item == &app) {
@@ -5290,16 +5627,363 @@ fn toggle_skill_app(skill_id: String, app: String, enabled: bool) -> Result<Skil
 }
 
 #[tauri::command]
-fn uninstall_skill(skill_id: String) -> Result<SkillRecord, String> {
+async fn enable_skill_apps(skill_id: String, apps: Vec<String>) -> Result<SkillRecord, String> {
+    run_skill_write(move || enable_skill_apps_inner(skill_id, apps)).await
+}
+
+fn enable_skill_apps_inner(skill_id: String, apps: Vec<String>) -> Result<SkillRecord, String> {
     let dirs = agentdock_dirs()?;
     ensure_dirs(&dirs)?;
-    let mut skills = list_skills_inner()?;
-    let skill = skills
-        .iter_mut()
+    let settings = read_app_settings(&dirs)?;
+    if skills_uses_legacy_storage(&settings) {
+        let mut updated = None;
+        for app in apps {
+            updated = Some(toggle_skill_app_inner(skill_id.clone(), app, true)?);
+        }
+        return updated.ok_or_else(|| "至少选择一个客户端".to_string());
+    }
+
+    let (source, raw_skill_id) = split_sourced_skill_id(&skill_id);
+    let scoped_settings = skill_source_settings(&settings, source);
+    let cwd = skills_cli_working_directory(&scoped_settings)?
+        .ok_or_else(|| "Cannot resolve Skills CLI working directory".to_string())?;
+    let (command, installed_apps) =
+        skills_cli_enable_apps_command(&skill_id, &scoped_settings, &apps)?;
+    run_skills_cli(command, &cwd)?;
+    Ok(SkillRecord {
+        id: sourced_skill_id(source, &slugify(raw_skill_id)),
+        name: raw_skill_id.to_string(),
+        description: cwd.display().to_string(),
+        source: scoped_settings.skill_storage_location,
+        installed: true,
+        apps: installed_apps,
+        updated_at: now_rfc3339(),
+    })
+}
+
+fn toggle_cli_skill_app(
+    skill_id: String,
+    app: String,
+    enabled: bool,
+    settings: &AppSettings,
+) -> Result<SkillRecord, String> {
+    if skills_cli_agent_name(&app).is_none() {
+        return Err(format!("{} 不受 Skills CLI 支持", app));
+    }
+    let (source, raw_skill_id) = split_sourced_skill_id(&skill_id);
+    if enabled {
+        let scoped_settings = skill_source_settings(settings, source);
+        let cwd = skills_cli_working_directory(&scoped_settings)?
+            .ok_or_else(|| "Cannot resolve Skills CLI working directory".to_string())?;
+        let apps = vec![app.clone()];
+        run_skills_cli(
+            skills_cli_add_command(raw_skill_id, None, &scoped_settings, Some(apps.as_slice())),
+            &cwd,
+        )?;
+        return Ok(SkillRecord {
+            id: sourced_skill_id(source, &slugify(raw_skill_id)),
+            name: raw_skill_id.to_string(),
+            description: cwd.display().to_string(),
+            source: scoped_settings.skill_storage_location,
+            installed: true,
+            apps,
+            updated_at: now_rfc3339(),
+        });
+    }
+
+    let existing = list_skills_inner()?
+        .into_iter()
+        .find(|skill| skill.id == skill_id || skill.name == skill_id)
+        .ok_or_else(|| "未找到 Skill".to_string())?;
+    let remaining_apps = existing
+        .apps
+        .iter()
+        .filter(|item| *item != &app)
+        .cloned()
+        .collect::<Vec<_>>();
+    let remove_apps = vec![app];
+    let scoped_settings = skill_source_settings(settings, &existing.source);
+    let cwd = skills_cli_working_directory(&scoped_settings)?
+        .ok_or_else(|| "Cannot resolve Skills CLI working directory".to_string())?;
+    let remove_target = skills_cli_remove_target(&existing);
+    run_skills_cli_allowing_missing_skill(
+        skills_cli_remove_command(
+            &remove_target,
+            &scoped_settings,
+            Some(remove_apps.as_slice()),
+        ),
+        &cwd,
+    )?;
+    let dirs = agentdock_dirs()?;
+    let app_still_enabled = list_skill_records_for_source(&dirs, &existing.source)?
+        .into_iter()
+        .find(|skill| skill.id == existing.id)
+        .is_some_and(|skill| skill.apps.iter().any(|item| item == &remove_apps[0]));
+    if app_still_enabled {
+        return Err(format!(
+            "Skills CLI 未能从 {} 移除 {}",
+            remove_apps[0], existing.name
+        ));
+    }
+    Ok(SkillRecord {
+        id: existing.id,
+        name: existing.name,
+        description: existing.description,
+        source: existing.source,
+        installed: !remaining_apps.is_empty(),
+        apps: remaining_apps,
+        updated_at: now_rfc3339(),
+    })
+}
+
+#[tauri::command]
+async fn remove_shared_skill(skill_id: String) -> Result<SkillRecord, String> {
+    run_skill_write(move || remove_shared_skill_inner(skill_id)).await
+}
+
+fn remove_shared_skill_inner(skill_id: String) -> Result<SkillRecord, String> {
+    let dirs = agentdock_dirs()?;
+    ensure_dirs(&dirs)?;
+    let existing = list_skills_inner()?
+        .into_iter()
         .find(|skill| skill.id == skill_id)
         .ok_or_else(|| "未找到 Skill".to_string())?;
+    if !matches!(existing.source.as_str(), "global" | "agentdock") {
+        return Err("当前 Skill 不支持移除 .agents 共享目录".to_string());
+    }
 
-    let skill_dir = active_skills_dir(&dirs)?.join(&skill.id);
+    let shared_path = PathBuf::from(&existing.description);
+    let shared_root = if existing.source == "global" {
+        dirs_home()
+            .ok_or_else(|| "无法确定用户主目录".to_string())?
+            .join(".agents")
+            .join("skills")
+    } else {
+        dirs.data_dir.join(".agents").join("skills")
+    };
+    validate_shared_skill_path(&shared_path, &shared_root)?;
+
+    let independent_apps = existing
+        .apps
+        .iter()
+        .filter(|app| !is_shared_skill_client(app))
+        .cloned()
+        .collect::<Vec<_>>();
+    let independent_paths = independent_apps
+        .iter()
+        .map(|app| {
+            skill_client_install_path(
+                &dirs,
+                &existing.source,
+                app,
+                skills_cli_remove_target(&existing),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    remove_shared_skill_directory(&shared_path, &independent_paths)?;
+
+    let refreshed = list_skill_records_for_source(&dirs, &existing.source)?;
+    let updated = refreshed.into_iter().find(|skill| skill.id == existing.id);
+    if independent_apps.is_empty() {
+        if updated.is_some() {
+            return Err("移除 .agents 共享目录后仍检测到该 Skill".to_string());
+        }
+        return Ok(SkillRecord {
+            installed: false,
+            apps: Vec::new(),
+            updated_at: now_rfc3339(),
+            ..existing
+        });
+    }
+
+    let updated = updated.ok_or_else(|| "移除共享目录后未检测到独立客户端 Skill".to_string())?;
+    if updated.apps.iter().any(|app| is_shared_skill_client(app))
+        || independent_apps
+            .iter()
+            .any(|app| !updated.apps.contains(app))
+    {
+        return Err("移除 .agents 共享目录后的客户端状态不符合预期".to_string());
+    }
+    Ok(updated)
+}
+
+fn is_shared_skill_client(app: &str) -> bool {
+    matches!(app, "codex" | "antigravity" | "opencode")
+}
+
+fn validate_shared_skill_path(path: &Path, expected_root: &Path) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "无效的 .agents Skill 路径".to_string())?;
+    let actual_parent =
+        fs::canonicalize(parent).map_err(|err| format!("读取 .agents 目录失败: {}", err))?;
+    let expected_parent = fs::canonicalize(expected_root)
+        .map_err(|err| format!("读取预期 .agents 目录失败: {}", err))?;
+    if actual_parent != expected_parent {
+        return Err("Skill 路径不属于当前作用域的 .agents 目录".to_string());
+    }
+    Ok(())
+}
+
+fn skill_client_install_path(
+    dirs: &AgentDockDirs,
+    source: &str,
+    app: &str,
+    skill_name: String,
+) -> Result<PathBuf, String> {
+    let root = if source == "global" {
+        let home = dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?;
+        match app {
+            "claude-code" => env::var_os("CLAUDE_CONFIG_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".claude"))
+                .join("skills"),
+            "openclaw" => [".openclaw", ".clawdbot", ".moltbot"]
+                .into_iter()
+                .map(|name| home.join(name))
+                .find(|path| path.is_dir())
+                .unwrap_or_else(|| home.join(".openclaw"))
+                .join("skills"),
+            "hermes" => env::var_os("HERMES_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".hermes"))
+                .join("skills"),
+            _ => return Err(format!("{} 没有独立 Skills 目录", app)),
+        }
+    } else {
+        match app {
+            "claude-code" => dirs.data_dir.join(".claude").join("skills"),
+            "openclaw" => dirs.data_dir.join("skills"),
+            "hermes" => dirs.data_dir.join(".hermes").join("skills"),
+            _ => return Err(format!("{} 没有独立 Skills 目录", app)),
+        }
+    };
+    Ok(root.join(skill_name))
+}
+
+fn remove_shared_skill_directory(
+    shared_path: &Path,
+    independent_paths: &[PathBuf],
+) -> Result<(), String> {
+    if !shared_path.is_dir() {
+        return Err("未找到 .agents 共享 Skill 目录".to_string());
+    }
+    for path in independent_paths {
+        let metadata = fs::symlink_metadata(path)
+            .map_err(|err| format!("独立客户端 Skill 目录不存在 {}: {}", path.display(), err))?;
+        if metadata.file_type().is_symlink() {
+            let parent = path
+                .parent()
+                .ok_or_else(|| "无效的独立客户端 Skill 路径".to_string())?;
+            let temp = parent.join(format!(
+                ".agentdock-detach-{}-{}",
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .unwrap_or("skill"),
+                OffsetDateTime::now_utc().unix_timestamp_nanos()
+            ));
+            copy_dir_all(shared_path, &temp)?;
+            remove_skill_link(path)?;
+            fs::rename(&temp, path).map_err(|err| format!("保留独立客户端 Skill 失败: {}", err))?;
+        } else if !path.is_dir() {
+            return Err(format!("独立客户端 Skill 路径不是目录: {}", path.display()));
+        }
+    }
+    fs::remove_dir_all(shared_path).map_err(|err| format!("移除 .agents Skill 失败: {}", err))
+}
+
+#[cfg(windows)]
+fn remove_skill_link(path: &Path) -> Result<(), String> {
+    fs::remove_dir(path).map_err(|err| format!("替换 Skill 目录链接失败: {}", err))
+}
+
+#[cfg(not(windows))]
+fn remove_skill_link(path: &Path) -> Result<(), String> {
+    fs::remove_file(path).map_err(|err| format!("替换 Skill 目录链接失败: {}", err))
+}
+
+#[tauri::command]
+async fn uninstall_skill(skill_id: String) -> Result<SkillRecord, String> {
+    run_skill_write(move || uninstall_skill_inner(skill_id)).await
+}
+
+fn uninstall_skill_inner(skill_id: String) -> Result<SkillRecord, String> {
+    let dirs = agentdock_dirs()?;
+    ensure_dirs(&dirs)?;
+    let settings = read_app_settings(&dirs)?;
+    if skills_uses_legacy_storage(&settings) {
+        return uninstall_legacy_skill(&dirs, skill_id);
+    }
+    let has_source = skill_id.contains("::");
+    let (source_hint, raw_skill_id) = split_sourced_skill_id(&skill_id);
+    let existing = list_skills_inner().ok().and_then(|skills| {
+        skills.into_iter().find(|skill| {
+            let (_, id) = split_sourced_skill_id(&skill.id);
+            if has_source {
+                skill.id == skill_id
+            } else {
+                id == raw_skill_id || skill.name == raw_skill_id
+            }
+        })
+    });
+    let source = existing
+        .as_ref()
+        .map(|skill| skill.source.as_str())
+        .unwrap_or(source_hint);
+    let scoped_settings = skill_source_settings(&settings, source);
+    let cwd = skills_cli_working_directory(&scoped_settings)?
+        .ok_or_else(|| "Cannot resolve Skills CLI working directory".to_string())?;
+    let skill_name = existing
+        .as_ref()
+        .map(|skill| skill.name.clone())
+        .unwrap_or_else(|| raw_skill_id.to_string());
+    let remove_target = existing
+        .as_ref()
+        .map(skills_cli_remove_target)
+        .unwrap_or_else(|| raw_skill_id.to_string());
+    run_skills_cli_allowing_missing_skill(
+        skills_cli_remove_command(&remove_target, &scoped_settings, None),
+        &cwd,
+    )?;
+    if let Some(existing) = existing.as_ref() {
+        let still_installed = list_skill_records_for_source(&dirs, source)?
+            .into_iter()
+            .any(|skill| skill.id == existing.id);
+        if still_installed {
+            return Err(format!(
+                "Skills CLI 未能从 {} 目录移除 {}",
+                if source == "global" {
+                    "全局"
+                } else {
+                    "AgentDock"
+                },
+                existing.name
+            ));
+        }
+    }
+    Ok(SkillRecord {
+        id: existing
+            .as_ref()
+            .map(|skill| skill.id.clone())
+            .unwrap_or_else(|| sourced_skill_id(source, &slugify(raw_skill_id))),
+        name: skill_name,
+        description: cwd.display().to_string(),
+        source: scoped_settings.skill_storage_location,
+        installed: false,
+        apps: Vec::new(),
+        updated_at: now_rfc3339(),
+    })
+}
+
+fn uninstall_legacy_skill(dirs: &AgentDockDirs, skill_id: String) -> Result<SkillRecord, String> {
+    let mut skills = list_legacy_skills_inner(dirs)?;
+    let (_, raw_skill_id) = split_sourced_skill_id(&skill_id);
+    let skill = skills
+        .iter_mut()
+        .find(|skill| skill.id == raw_skill_id)
+        .ok_or_else(|| "未找到 Skill".to_string())?;
+
+    let skill_dir = active_skills_dir(dirs)?.join(&skill.id);
     if skill_dir.exists() {
         let backup_dir = dirs.backups_dir.join(format!(
             "skill-{}-{}",
@@ -5312,17 +5996,39 @@ fn uninstall_skill(skill_id: String) -> Result<SkillRecord, String> {
     skill.installed = false;
     skill.updated_at = now_rfc3339();
     let updated = skill.clone();
-    write_json(&skills_path(&dirs), &skills)?;
+    write_json(&skills_path(dirs), &skills)?;
     Ok(updated)
 }
 
 #[tauri::command]
-fn sync_skills() -> Result<SyncResult, String> {
+async fn sync_skills() -> Result<SyncResult, String> {
+    run_skill_write(sync_skills_inner).await
+}
+
+fn sync_skills_inner() -> Result<SyncResult, String> {
     let dirs = agentdock_dirs()?;
     ensure_dirs(&dirs)?;
     let settings = read_app_settings(&dirs)?;
-    let skills_dir = active_skills_dir(&dirs)?;
-    let skills = list_skills_inner()?;
+    if skills_uses_legacy_storage(&settings) {
+        return sync_legacy_skills(&dirs, &settings);
+    }
+    let cwd = skills_cli_working_directory(&settings)?
+        .ok_or_else(|| "请先选择项目目录，再同步 project 作用域的 Skills".to_string())?;
+    let output = run_skills_cli(skills_cli_sync_command(), &cwd)?;
+
+    Ok(SyncResult {
+        message: if output.trim().is_empty() {
+            "Skills 已同步".to_string()
+        } else {
+            output.trim().to_string()
+        },
+        written_files: Vec::new(),
+    })
+}
+
+fn sync_legacy_skills(dirs: &AgentDockDirs, settings: &AppSettings) -> Result<SyncResult, String> {
+    let skills_dir = active_skills_dir(dirs)?;
+    let skills = list_legacy_skills_inner(dirs)?;
     let mut written_files = Vec::new();
 
     for skill in skills.iter().filter(|skill| skill.installed) {
@@ -5337,19 +6043,11 @@ fn sync_skills() -> Result<SyncResult, String> {
                 .join("skills")
                 .join(&skill.id)
                 .join("SKILL.md");
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|err| format!("创建 Skill 同步目录失败: {}", err))?;
-            }
             sync_skill_file(&source, &target, &settings.skill_sync_method)?;
             written_files.push(target.display().to_string());
             if app == "grok" {
                 if let Some(home) = dirs_home() {
                     let user_target = home.join(".grok/skills").join(&skill.id).join("SKILL.md");
-                    if let Some(parent) = user_target.parent() {
-                        fs::create_dir_all(parent)
-                            .map_err(|err| format!("创建 Grok Skill 目录失败: {}", err))?;
-                    }
                     sync_skill_file(&source, &user_target, &settings.skill_sync_method)?;
                     written_files.push(user_target.display().to_string());
                 }
@@ -5390,9 +6088,624 @@ fn sync_skill_file(source: &Path, target: &Path, method: &str) -> Result<(), Str
             return Err("当前系统不支持 Skill 符号链接".to_string());
         }
     } else {
-        fs::copy(source, target).map_err(|err| format!("同步 Skill 失败: {}", err))?;
+        fs::copy(source, target).map_err(|err| format!("复制 Skill 文件失败: {}", err))?;
     }
     Ok(())
+}
+
+fn skills_cli_list_command(settings: &AppSettings) -> SkillsCliCommand {
+    if settings.skill_storage_location == "global" {
+        skills_cli_list_global_command()
+    } else {
+        skills_cli_list_project_command()
+    }
+}
+
+fn skills_cli_list_project_command() -> SkillsCliCommand {
+    SkillsCliCommand {
+        program: "npx".to_string(),
+        args: vec!["skills".to_string(), "ls".to_string(), "--json".to_string()],
+    }
+}
+
+fn skills_cli_list_global_command() -> SkillsCliCommand {
+    SkillsCliCommand {
+        program: "npx".to_string(),
+        args: vec![
+            "skills".to_string(),
+            "ls".to_string(),
+            "--json".to_string(),
+            "--global".to_string(),
+        ],
+    }
+}
+
+fn skills_cli_add_command(
+    package: &str,
+    skill_id: Option<&str>,
+    settings: &AppSettings,
+    apps: Option<&[String]>,
+) -> SkillsCliCommand {
+    let mut args = vec![
+        "skills".to_string(),
+        "add".to_string(),
+        package.trim().to_string(),
+        "--yes".to_string(),
+    ];
+    if settings.skill_storage_location == "global" {
+        args.push("--global".to_string());
+    }
+    if settings.skill_sync_method == "copy" {
+        args.push("--copy".to_string());
+    }
+    if let Some(skill_id) = skill_id.filter(|value| !value.trim().is_empty()) {
+        args.push("--skill".to_string());
+        args.push(skill_id.trim().to_string());
+    }
+    if let Some(apps) = apps.filter(|apps| !apps.is_empty()) {
+        let agents = skills_cli_agent_names(apps);
+        if agents.is_empty() {
+            return SkillsCliCommand {
+                program: "npx".to_string(),
+                args,
+            };
+        }
+        args.push("--agent".to_string());
+        args.extend(agents);
+    }
+    SkillsCliCommand {
+        program: "npx".to_string(),
+        args,
+    }
+}
+
+fn skills_cli_enable_apps_command(
+    skill_id: &str,
+    settings: &AppSettings,
+    apps: &[String],
+) -> Result<(SkillsCliCommand, Vec<String>), String> {
+    let installed_apps = skills_cli_supported_apps(apps);
+    if installed_apps.is_empty() {
+        return Err("所选客户端均不受 Skills CLI 支持".to_string());
+    }
+    let (_, raw_skill_id) = split_sourced_skill_id(skill_id);
+    let command = skills_cli_add_command(raw_skill_id, None, settings, Some(&installed_apps));
+    Ok((command, installed_apps))
+}
+
+fn skills_cli_remove_command(
+    skill: &str,
+    settings: &AppSettings,
+    apps: Option<&[String]>,
+) -> SkillsCliCommand {
+    let mut args = vec![
+        "skills".to_string(),
+        "remove".to_string(),
+        "--skill".to_string(),
+        skill.trim().to_string(),
+        "--yes".to_string(),
+    ];
+    if settings.skill_storage_location == "global" {
+        args.push("--global".to_string());
+    }
+    if let Some(apps) = apps.filter(|apps| !apps.is_empty()) {
+        let agents = skills_cli_agent_names(apps);
+        if agents.is_empty() {
+            return SkillsCliCommand {
+                program: "npx".to_string(),
+                args,
+            };
+        }
+        args.push("--agent".to_string());
+        args.extend(agents);
+    }
+    SkillsCliCommand {
+        program: "npx".to_string(),
+        args,
+    }
+}
+
+fn skills_cli_supported_apps(apps: &[String]) -> Vec<String> {
+    let mut supported = Vec::new();
+    for app in apps {
+        if skills_cli_agent_name(app).is_some() && !supported.contains(app) {
+            supported.push(app.clone());
+        }
+    }
+    supported
+}
+
+fn skills_cli_agent_names(apps: &[String]) -> Vec<String> {
+    let mut agents = Vec::new();
+    for app in apps {
+        if let Some(agent) = skills_cli_agent_name(app) {
+            let agent = agent.to_string();
+            if !agents.contains(&agent) {
+                agents.push(agent);
+            }
+        }
+    }
+    agents
+}
+
+fn skills_cli_agent_name(app: &str) -> Option<&'static str> {
+    match app {
+        "claude-code" => Some("claude-code"),
+        "codex" => Some("codex"),
+        "antigravity" => Some("antigravity"),
+        "opencode" => Some("opencode"),
+        "openclaw" => Some("openclaw"),
+        "hermes" => Some("hermes-agent"),
+        _ => None,
+    }
+}
+
+fn skills_cli_sync_command() -> SkillsCliCommand {
+    SkillsCliCommand {
+        program: "npx".to_string(),
+        args: vec![
+            "skills".to_string(),
+            "experimental_sync".to_string(),
+            "--yes".to_string(),
+        ],
+    }
+}
+
+fn run_skills_cli(spec: SkillsCliCommand, cwd: &Path) -> Result<String, String> {
+    let search_paths = command_search_paths();
+    let executable = resolve_skills_cli_program_in_paths(&spec.program, &search_paths);
+    let mut command = command_for_executable(&executable, &spec.args);
+    if let Some(parent) = executable.parent() {
+        let mut paths = vec![parent.to_path_buf()];
+        paths.extend(search_paths);
+        if let Ok(path) = env::join_paths(paths) {
+            command.env("PATH", path);
+        }
+    }
+    command.current_dir(cwd);
+    let output = command_output_with_timeout_message(
+        &mut command,
+        SKILLS_CLI_TIMEOUT,
+        SKILLS_CLI_TIMEOUT_MESSAGE,
+    )
+    .map_err(|err| {
+        if err == SKILLS_CLI_TIMEOUT_MESSAGE {
+            err
+        } else {
+            format!("启动 Skills CLI 失败: {}", err)
+        }
+    })?;
+    if !output.status.success() {
+        return Err(format!(
+            "Skills CLI 执行失败: {}",
+            command_failure_detail(&output)
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+fn run_skills_cli_allowing_missing_skill(
+    spec: SkillsCliCommand,
+    cwd: &Path,
+) -> Result<String, String> {
+    match run_skills_cli(spec, cwd) {
+        Ok(output) => Ok(output),
+        Err(error) if skills_cli_missing_skill_is_success(&error) => Ok(error),
+        Err(error) => Err(error),
+    }
+}
+
+fn skills_cli_missing_skill_is_success(error: &str) -> bool {
+    let lower = error.to_lowercase();
+    lower.contains("no matching skills found") || lower.contains("no matching skill found")
+}
+
+fn resolve_skills_cli_program_in_paths(program: &str, paths: &[PathBuf]) -> PathBuf {
+    find_executable_in_paths(program, paths).unwrap_or_else(|| PathBuf::from(program))
+}
+
+#[cfg(windows)]
+fn command_for_executable(executable: &Path, args: &[String]) -> Command {
+    let executable_text = executable.to_string_lossy();
+    let lower = executable_text.to_ascii_lowercase();
+    if lower.ends_with(".cmd") || lower.ends_with(".bat") {
+        let mut command = Command::new("cmd.exe");
+        command.args(["/D", "/C"]).arg(executable).args(args);
+        return command;
+    }
+    let mut command = Command::new(executable);
+    command.args(args);
+    command
+}
+
+#[cfg(not(windows))]
+fn command_for_executable(executable: &Path, args: &[String]) -> Command {
+    let mut command = Command::new(executable);
+    command.args(args);
+    command
+}
+
+#[tauri::command]
+async fn discover_skills(
+    query: Option<String>,
+    view: Option<String>,
+) -> Result<SkillDiscoveryResult, String> {
+    let query = query.unwrap_or_default();
+    let view = view.unwrap_or_else(|| "trending".to_string());
+    fetch_skills_discovery(&query, &view).await
+}
+
+async fn fetch_skills_discovery(query: &str, view: &str) -> Result<SkillDiscoveryResult, String> {
+    let proxy_domain = env::var("SKILLS_PROXY_DOMAIN")
+        .unwrap_or_else(|_| "https://skills-proxy-ruddy.vercel.app".to_string());
+    let api_base =
+        env::var("SKILLS_API_BASE").unwrap_or_else(|_| "https://www.skills.sh".to_string());
+    let dirs = agentdock_dirs()?;
+    ensure_dirs(&dirs)?;
+    let settings = read_app_settings(&dirs)?;
+    let trimmed = query.trim();
+    let cache_key = skills_discovery_cache_key(trimmed);
+    if let Some(result) = read_cached_skills_discovery(&dirs, &cache_key) {
+        return Ok(result);
+    }
+    let client = skills_http_client(settings.skill_api_proxy_enabled)?;
+    let token = match skills_proxy_credentials() {
+        Some((proxy_api_key, proxy_api_secret)) => Some(
+            fetch_skills_oidc_token(&client, &proxy_domain, &proxy_api_key, &proxy_api_secret)
+                .await?,
+        ),
+        None => None,
+    };
+    let result = if !trimmed.is_empty() {
+        let value = fetch_skills_api_json(
+            &client,
+            skills_api_search_url(&api_base, trimmed)?,
+            token.as_deref(),
+        )
+        .await?;
+        SkillDiscoveryResult {
+            mode: "search".to_string(),
+            query: trimmed.to_string(),
+            view: view.to_string(),
+            items: parse_skill_directory_items(&value)
+                .into_iter()
+                .take(100)
+                .collect(),
+            sections: Vec::new(),
+        }
+    } else {
+        let views = [
+            ("all-time", "All-time"),
+            ("trending", "Trending"),
+            ("hot", "Hot"),
+        ];
+        let mut sections = Vec::new();
+        for (id, title) in views {
+            let value = fetch_skills_api_json(
+                &client,
+                skills_api_leaderboard_url(&api_base, id)?,
+                token.as_deref(),
+            )
+            .await?;
+            sections.push(SkillDiscoverySection {
+                id: id.to_string(),
+                title: title.to_string(),
+                items: parse_skill_directory_items(&value)
+                    .into_iter()
+                    .take(100)
+                    .collect(),
+            });
+        }
+        let items = sections
+            .iter()
+            .find(|section| section.id == view)
+            .or_else(|| sections.first())
+            .map(|section| section.items.clone())
+            .unwrap_or_default();
+        SkillDiscoveryResult {
+            mode: "leaderboard".to_string(),
+            query: String::new(),
+            view: view.to_string(),
+            items,
+            sections,
+        }
+    };
+    write_cached_skills_discovery(&dirs, &cache_key, &result)?;
+    Ok(result)
+}
+
+fn skills_discovery_cache_path(dirs: &AgentDockDirs) -> PathBuf {
+    dirs.data_dir.join("skills-discovery-cache.json")
+}
+
+fn skills_discovery_cache_key(query: &str) -> String {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        "leaderboards:all-time,trending,hot:v1".to_string()
+    } else {
+        format!("search:{}:v1", trimmed.to_ascii_lowercase())
+    }
+}
+
+fn read_cached_skills_discovery(dirs: &AgentDockDirs, key: &str) -> Option<SkillDiscoveryResult> {
+    const CACHE_TTL_SECONDS: i64 = 8 * 60 * 60;
+    let cache = fs::read_to_string(skills_discovery_cache_path(dirs))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<SkillsDiscoveryCache>(&raw).ok())?;
+    let entry = cache.entries.get(key)?;
+    let age = OffsetDateTime::now_utc().unix_timestamp() - entry.saved_at;
+    if (0..CACHE_TTL_SECONDS).contains(&age) {
+        Some(entry.result.clone())
+    } else {
+        None
+    }
+}
+
+fn write_cached_skills_discovery(
+    dirs: &AgentDockDirs,
+    key: &str,
+    result: &SkillDiscoveryResult,
+) -> Result<(), String> {
+    let path = skills_discovery_cache_path(dirs);
+    let mut cache = fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<SkillsDiscoveryCache>(&raw).ok())
+        .unwrap_or_default();
+    cache.entries.insert(
+        key.to_string(),
+        SkillsDiscoveryCacheEntry {
+            saved_at: OffsetDateTime::now_utc().unix_timestamp(),
+            result: result.clone(),
+        },
+    );
+    write_json(&path, &cache)
+}
+
+fn skills_http_client(proxy_enabled: bool) -> Result<reqwest::Client, String> {
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30))
+        .user_agent(format!("AgentDock/{}", env!("CARGO_PKG_VERSION")));
+    if proxy_enabled {
+        if let Some(proxy_url) = platform_system_proxy_url() {
+            builder = builder.proxy(
+                reqwest::Proxy::all(&proxy_url)
+                    .map_err(|err| format!("Skills API 代理设置无效: {}", err))?,
+            );
+        }
+    } else {
+        builder = builder.no_proxy();
+    }
+    builder
+        .build()
+        .map_err(|err| format!("创建 Skills API 客户端失败: {}", err))
+}
+
+#[cfg(windows)]
+fn platform_system_proxy_url() -> Option<String> {
+    use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+
+    let internet_settings = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+        .ok()?;
+    let enabled = internet_settings
+        .get_value::<u32, _>("ProxyEnable")
+        .ok()
+        .map(|value| value == 1)
+        .unwrap_or(false);
+    if !enabled {
+        return None;
+    }
+    let proxy_server = internet_settings
+        .get_value::<String, _>("ProxyServer")
+        .ok()?;
+    proxy_url_from_windows_proxy_server(&proxy_server)
+}
+
+#[cfg(not(windows))]
+fn platform_system_proxy_url() -> Option<String> {
+    None
+}
+
+fn proxy_url_from_windows_proxy_server(proxy_server: &str) -> Option<String> {
+    let trimmed = proxy_server.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let selected = if trimmed.contains('=') {
+        trimmed
+            .split(';')
+            .filter_map(|entry| entry.split_once('='))
+            .find(|(scheme, _)| scheme.eq_ignore_ascii_case("https"))
+            .or_else(|| {
+                trimmed
+                    .split(';')
+                    .filter_map(|entry| entry.split_once('='))
+                    .find(|(scheme, _)| scheme.eq_ignore_ascii_case("http"))
+            })
+            .map(|(_, value)| value.trim())?
+    } else {
+        trimmed
+    };
+    if selected.starts_with("http://") || selected.starts_with("https://") {
+        Some(selected.to_string())
+    } else {
+        Some(format!("http://{}", selected))
+    }
+}
+
+fn skills_proxy_credentials() -> Option<(String, String)> {
+    let api_key = env::var("SKILLS_PROXY_API_KEY").ok()?.trim().to_string();
+    let api_secret = env::var("SKILLS_PROXY_API_SECRET").ok()?.trim().to_string();
+    if api_key.is_empty() || api_secret.is_empty() {
+        None
+    } else {
+        Some((api_key, api_secret))
+    }
+}
+
+async fn fetch_skills_api_json(
+    client: &reqwest::Client,
+    url: reqwest::Url,
+    token: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let mut request = client.get(url);
+    if let Some(token) = token.filter(|value| !value.trim().is_empty()) {
+        request = request.bearer_auth(token);
+    }
+    request
+        .send()
+        .await
+        .map_err(|err| format!("请求 Skills API 失败: {}", err))?
+        .error_for_status()
+        .map_err(|err| format!("Skills API 返回错误: {}", err))?
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|err| format!("解析 Skills API 响应失败: {}", err))
+}
+
+async fn fetch_skills_oidc_token(
+    client: &reqwest::Client,
+    proxy_domain: &str,
+    api_key: &str,
+    api_secret: &str,
+) -> Result<String, String> {
+    let timestamp = OffsetDateTime::now_utc().unix_timestamp();
+    let timestamp = timestamp.to_string();
+    let signature = skills_proxy_signature(api_secret, &timestamp, "GET", "/api/token");
+    let url = skills_proxy_token_url(proxy_domain)?;
+    let value = client
+        .get(url)
+        .header("x-api-key", api_key)
+        .header("x-timestamp", timestamp)
+        .header("x-signature", signature)
+        .send()
+        .await
+        .map_err(|err| format!("请求 Skills proxy token 失败: {}", err))?
+        .error_for_status()
+        .map_err(|err| format!("Skills proxy token 返回错误: {}", err))?
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|err| format!("解析 Skills proxy token 失败: {}", err))?;
+    extract_skills_token(&value).ok_or_else(|| "Skills proxy token 响应缺少 token".to_string())
+}
+
+fn skills_proxy_signature(secret: &str, timestamp: &str, method: &str, path: &str) -> String {
+    type HmacSha256 = Hmac<Sha256>;
+    let payload = format!("{}:{}:{}", timestamp, method.to_ascii_uppercase(), path);
+    let mut mac =
+        HmacSha256::new_from_slice(secret.as_bytes()).expect("HMAC accepts keys of any size");
+    mac.update(payload.as_bytes());
+    bytes_to_hex(&mac.finalize().into_bytes())
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{:02x}", byte)).collect()
+}
+
+fn skills_proxy_token_url(proxy_domain: &str) -> Result<reqwest::Url, String> {
+    reqwest::Url::parse(proxy_domain)
+        .and_then(|base| base.join("/api/token"))
+        .map_err(|_| "Skills proxy domain 格式无效".to_string())
+}
+
+fn skills_api_search_url(api_base: &str, query: &str) -> Result<reqwest::Url, String> {
+    let mut url = reqwest::Url::parse(api_base)
+        .and_then(|base| base.join("/api/search"))
+        .map_err(|_| "Skills API base 格式无效".to_string())?;
+    url.query_pairs_mut()
+        .append_pair("q", query)
+        .append_pair("limit", "100");
+    Ok(url)
+}
+
+fn skills_api_leaderboard_url(api_base: &str, view: &str) -> Result<reqwest::Url, String> {
+    let query = match view.trim() {
+        "hot" => "code",
+        "trending" => "agent",
+        _ => "skill",
+    };
+    let mut url = reqwest::Url::parse(api_base)
+        .and_then(|base| base.join("/api/search"))
+        .map_err(|_| "Skills API base 格式无效".to_string())?;
+    url.query_pairs_mut()
+        .append_pair("q", query)
+        .append_pair("limit", "100");
+    Ok(url)
+}
+
+fn extract_skills_token(value: &serde_json::Value) -> Option<String> {
+    ["token", "oidcToken", "id_token", "access_token"]
+        .iter()
+        .find_map(|key| value.get(*key).and_then(|item| item.as_str()))
+        .map(str::to_string)
+}
+
+fn parse_skill_directory_items(value: &serde_json::Value) -> Vec<SkillDirectoryItem> {
+    let array = ["items", "skills", "results", "data"]
+        .iter()
+        .find_map(|key| value.get(*key).and_then(|item| item.as_array()))
+        .or_else(|| value.as_array());
+    let Some(array) = array else {
+        return Vec::new();
+    };
+    array
+        .iter()
+        .enumerate()
+        .map(|(index, item)| skill_directory_item_from_value(index, item))
+        .collect()
+}
+
+fn skill_directory_item_from_value(index: usize, value: &serde_json::Value) -> SkillDirectoryItem {
+    let package = string_field(
+        value,
+        &[
+            "installUrl",
+            "source",
+            "repository",
+            "package",
+            "id",
+            "slug",
+            "name",
+        ],
+    )
+    .unwrap_or_else(|| format!("skill-{}", index + 1));
+    let repository = string_field(value, &["repository", "repo", "githubRepo", "source"])
+        .unwrap_or_else(|| package.clone());
+    let owner = string_field(value, &["owner", "author", "publisher"]).unwrap_or_else(|| {
+        repository
+            .split_once('/')
+            .map(|(owner, _)| owner.to_string())
+            .unwrap_or_default()
+    });
+    let name =
+        string_field(value, &["name", "title", "skillId"]).unwrap_or_else(|| package.clone());
+    let skill_id =
+        string_field(value, &["skillId", "name", "slug"]).unwrap_or_else(|| name.clone());
+    SkillDirectoryItem {
+        id: slugify(&package),
+        name,
+        description: string_field(value, &["description", "summary"]).unwrap_or_default(),
+        package,
+        skill_id,
+        owner,
+        repository,
+        url: string_field(value, &["url", "htmlUrl", "homepage"]).unwrap_or_default(),
+        score: number_field(value, &["score", "rankScore"]),
+        downloads: number_field(value, &["downloads", "installs", "installCount"])
+            .map(|value| value as u64),
+    }
+}
+
+fn string_field(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(|item| item.as_str()))
+        .map(str::to_string)
+}
+
+fn number_field(value: &serde_json::Value, keys: &[&str]) -> Option<f64> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(|item| item.as_f64()))
 }
 
 #[tauri::command]
@@ -5662,7 +6975,20 @@ fn command_search_paths() -> Vec<PathBuf> {
             "installation/bin",
         );
         #[cfg(windows)]
-        paths.push(home.join("AppData/Roaming/npm"));
+        paths.extend([
+            home.join("AppData/Roaming/npm"),
+            PathBuf::from("C:/nvm4w/nodejs"),
+        ]);
+    }
+    #[cfg(windows)]
+    {
+        if let Some(nvm_symlink) = env::var_os("NVM_SYMLINK") {
+            paths.push(PathBuf::from(nvm_symlink));
+        }
+        paths.extend([
+            PathBuf::from("C:/Program Files/nodejs"),
+            PathBuf::from("C:/Program Files (x86)/nodejs"),
+        ]);
     }
     #[cfg(target_os = "macos")]
     paths.extend([
@@ -7908,7 +9234,10 @@ pub fn run() {
             open_external,
             list_skills,
             install_skill,
+            discover_skills,
             toggle_skill_app,
+            enable_skill_apps,
+            remove_shared_skill,
             uninstall_skill,
             sync_skills,
             list_mcp_servers,
@@ -8029,7 +9358,7 @@ struct AgentDockDirs {
 fn agentdock_dirs() -> Result<AgentDockDirs, String> {
     let project_dirs = ProjectDirs::from("com", "AgentDock", "AgentDock")
         .ok_or_else(|| "无法解析当前系统的应用数据目录".to_string())?;
-    let data_dir = project_dirs.data_dir().to_path_buf();
+    let data_dir = agentdock_data_dir()?;
     let config_dir = project_dirs.config_dir().to_path_buf();
     let runtime_dir = data_dir.join("runtime");
     let clients_dir = data_dir.join("clients");
@@ -8047,6 +9376,30 @@ fn agentdock_dirs() -> Result<AgentDockDirs, String> {
         backups_dir,
         managed_configs_dir,
     })
+}
+
+fn agentdock_data_dir() -> Result<PathBuf, String> {
+    if cfg!(windows) {
+        return env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .or_else(|| dirs_home().map(|home| home.join("AppData").join("Roaming")))
+            .map(|root| root.join("AgentDock").join("AgentDock"))
+            .ok_or_else(|| "Cannot resolve AgentDock data directory".to_string());
+    }
+    if cfg!(target_os = "macos") {
+        return dirs_home()
+            .map(|home| {
+                home.join("Library")
+                    .join("Application Support")
+                    .join("AgentDock")
+            })
+            .ok_or_else(|| "Cannot resolve AgentDock data directory".to_string());
+    }
+    let root = env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| dirs_home().map(|home| home.join(".local").join("share")));
+    root.map(|path| path.join("AgentDock"))
+        .ok_or_else(|| "Cannot resolve AgentDock data directory".to_string())
 }
 
 fn ensure_dirs(dirs: &AgentDockDirs) -> Result<(), String> {
@@ -8067,12 +9420,12 @@ fn providers_path(dirs: &AgentDockDirs) -> PathBuf {
     dirs.config_dir.join("providers.json")
 }
 
-fn managed_clients_path(dirs: &AgentDockDirs) -> PathBuf {
-    dirs.config_dir.join("managed-clients.json")
-}
-
 fn skills_path(dirs: &AgentDockDirs) -> PathBuf {
     dirs.config_dir.join("skills.json")
+}
+
+fn managed_clients_path(dirs: &AgentDockDirs) -> PathBuf {
+    dirs.config_dir.join("managed-clients.json")
 }
 
 fn app_settings_path(dirs: &AgentDockDirs) -> PathBuf {
@@ -8197,10 +9550,21 @@ fn validate_working_directory(value: &str) -> Result<PathBuf, String> {
     fs::canonicalize(&path).map_err(|_| "无法读取项目目录，请重新选择".to_string())
 }
 
+fn display_path(path: &Path) -> String {
+    let value = path.display().to_string();
+    if let Some(stripped) = value.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{}", stripped)
+    } else if let Some(stripped) = value.strip_prefix(r"\\?\") {
+        stripped.to_string()
+    } else {
+        value
+    }
+}
+
 fn normalize_working_directory(value: &str) -> Option<String> {
     validate_working_directory(value)
         .ok()
-        .map(|path| path.display().to_string())
+        .map(|path| display_path(&path))
 }
 
 fn terminal_options() -> &'static [&'static str] {
@@ -8252,13 +9616,30 @@ fn default_terminal() -> &'static str {
     "system"
 }
 
+fn skills_uses_legacy_storage(settings: &AppSettings) -> bool {
+    !matches!(
+        settings.skill_storage_location.as_str(),
+        "agentdock" | "unified"
+    )
+}
+
 fn skills_storage_dir(dirs: &AgentDockDirs, settings: &AppSettings) -> Result<PathBuf, String> {
-    if settings.skill_storage_location == "unified" {
-        return dirs_home()
+    match settings.skill_storage_location.as_str() {
+        "unified" => dirs_home()
             .map(|home| home.join(".agents").join("skills"))
-            .ok_or_else(|| "无法确定统一 Skills 目录".to_string());
+            .ok_or_else(|| "无法确定 Skills 目录".to_string()),
+        _ => Ok(dirs.skills_dir.clone()),
     }
-    Ok(dirs.skills_dir.clone())
+}
+
+fn skills_storage_root_dir(
+    dirs: &AgentDockDirs,
+    settings: &AppSettings,
+) -> Result<PathBuf, String> {
+    match settings.skill_storage_location.as_str() {
+        "unified" => dirs_home().ok_or_else(|| "Cannot resolve Skills storage root".to_string()),
+        _ => Ok(dirs.data_dir.clone()),
+    }
 }
 
 fn active_skills_dir(dirs: &AgentDockDirs) -> Result<PathBuf, String> {
@@ -8296,6 +9677,28 @@ fn migrate_installed_skill_dirs(
         }
     }
     Ok(())
+}
+
+fn skills_cli_working_directory(settings: &AppSettings) -> Result<Option<PathBuf>, String> {
+    if matches!(
+        settings.skill_storage_location.as_str(),
+        "agentdock" | "unified"
+    ) {
+        let dirs = agentdock_dirs()?;
+        return skills_storage_root_dir(&dirs, settings).map(Some);
+    }
+    if settings.skill_storage_location == "global" {
+        return dirs_home()
+            .map(Some)
+            .ok_or_else(|| "无法确定用户主目录".to_string());
+    }
+    if settings.skill_storage_location != "project" {
+        return Ok(None);
+    }
+    if settings.current_working_directory.trim().is_empty() {
+        return Ok(None);
+    }
+    validate_working_directory(&settings.current_working_directory).map(Some)
 }
 
 fn auto_launch_app_path() -> Result<PathBuf, String> {
@@ -8933,11 +10336,12 @@ fn executable_candidates(name: &str) -> Vec<OsString> {
         let path_ext = env::var_os("PATHEXT")
             .and_then(|value| value.into_string().ok())
             .unwrap_or_else(|| ".EXE;.CMD;.BAT;.COM".to_string());
-        let mut candidates = vec![OsString::from(name)];
+        let mut candidates = Vec::new();
         for ext in path_ext.split(';') {
             candidates.push(OsString::from(format!("{}{}", name, ext.to_lowercase())));
             candidates.push(OsString::from(format!("{}{}", name, ext.to_uppercase())));
         }
+        candidates.push(OsString::from(name));
         candidates
     } else {
         vec![OsString::from(name)]
@@ -8994,21 +10398,63 @@ fn command_output_with_timeout(
     command: &mut Command,
     timeout: std::time::Duration,
 ) -> Result<std::process::Output, String> {
+    command_output_with_timeout_message(command, timeout, "读取客户端版本号超时")
+}
+
+fn command_output_with_timeout_message(
+    command: &mut Command,
+    timeout: std::time::Duration,
+    timeout_message: &str,
+) -> Result<std::process::Output, String> {
     hidden_command(command);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "无法读取命令标准输出".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "无法读取命令错误输出".to_string())?;
+    let stdout_reader = read_command_pipe(stdout);
+    let stderr_reader = read_command_pipe(stderr);
     let started = Instant::now();
     loop {
         match child.try_wait().map_err(|error| error.to_string())? {
-            Some(_) => return child.wait_with_output().map_err(|error| error.to_string()),
+            Some(status) => {
+                let stdout = stdout_reader
+                    .join()
+                    .map_err(|_| "读取命令标准输出失败".to_string())??;
+                let stderr = stderr_reader
+                    .join()
+                    .map_err(|_| "读取命令错误输出失败".to_string())??;
+                return Ok(std::process::Output {
+                    status,
+                    stdout,
+                    stderr,
+                });
+            }
             None if started.elapsed() >= timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err("读取客户端版本号超时".to_string());
+                return Err(timeout_message.to_string());
             }
             None => std::thread::sleep(std::time::Duration::from_millis(20)),
         }
     }
+}
+
+fn read_command_pipe<R>(mut pipe: R) -> std::thread::JoinHandle<Result<Vec<u8>, String>>
+where
+    R: Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut output = Vec::new();
+        pipe.read_to_end(&mut output)
+            .map_err(|error| error.to_string())?;
+        Ok(output)
+    })
 }
 
 #[cfg(windows)]
@@ -10107,14 +11553,50 @@ fn version_numbers(value: &str) -> Vec<u64> {
 fn migrate_app_ids(apps: &mut Vec<String>) -> bool {
     let mut migrated = false;
     for app in apps.iter_mut() {
-        if app == "gemini" {
-            *app = "antigravity".to_string();
-            migrated = true;
+        if let Some(normalized) = normalize_app_id(app) {
+            if app != &normalized {
+                *app = normalized;
+                migrated = true;
+            }
+        } else {
+            let slug = slugify(app);
+            if app != &slug {
+                *app = slug;
+                migrated = true;
+            }
         }
     }
+    apps.retain(|app| supported_provider_apps().contains(&app.as_str()));
     apps.sort();
     apps.dedup();
     migrated
+}
+
+fn normalize_app_ids(apps: Vec<String>) -> Vec<String> {
+    let mut normalized = apps
+        .into_iter()
+        .filter_map(|app| normalize_app_id(&app))
+        .collect::<Vec<_>>();
+    normalized.sort();
+    normalized.dedup();
+    normalized
+}
+
+fn normalize_app_id(app: &str) -> Option<String> {
+    let normalized = slugify(app);
+    let app_id = match normalized.as_str() {
+        "claude" | "claude-code" => "claude-code",
+        "claude-desktop" => "claude-desktop",
+        "codex" | "openai-codex" => "codex",
+        "antigravity" | "antigravity-cli" | "gemini" | "gemini-cli" => "antigravity",
+        "grok" | "grok-build" | "grokbuild" => "grok",
+        "open-code" | "opencode" => "opencode",
+        "openclaw" | "open-claw" => "openclaw",
+        "hermes" | "hermes-agent" => "hermes",
+        _ if supported_provider_apps().contains(&normalized.as_str()) => normalized.as_str(),
+        _ => return None,
+    };
+    Some(app_id.to_string())
 }
 
 fn existing_directory_for_path(path: &Path) -> Option<PathBuf> {
@@ -10234,12 +11716,51 @@ fn command_failure_detail(output: &std::process::Output) -> String {
     } else {
         stderr
     };
-    let lines = detail.lines().rev().take(8).collect::<Vec<_>>();
+    let clean = clean_command_output(&detail);
+    let lines = clean
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .rev()
+        .take(8)
+        .collect::<Vec<_>>();
     if lines.is_empty() {
         format!("进程退出状态 {}", output.status)
     } else {
         lines.into_iter().rev().collect::<Vec<_>>().join(" | ")
     }
+}
+
+fn clean_command_output(value: &str) -> String {
+    let mut output = String::new();
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            if matches!(chars.peek(), Some('[')) {
+                chars.next();
+                while let Some(next) = chars.next() {
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+            } else {
+                while let Some(next) = chars.next() {
+                    if ('@'..='~').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if ch == '\r' || ch == '\u{8}' {
+            continue;
+        }
+        if ch.is_control() && ch != '\n' && ch != '\t' {
+            continue;
+        }
+        output.push(ch);
+    }
+    output
 }
 
 fn find_file_named(root: &Path, expected_name: &str) -> Option<PathBuf> {
@@ -10772,6 +12293,7 @@ fn now_rfc3339() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{atomic::AtomicUsize, Arc};
 
     fn provider_test_profile(
         id: &str,
@@ -10801,6 +12323,48 @@ mod tests {
             created_at: now_rfc3339(),
             updated_at: now_rfc3339(),
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn skill_write_does_not_block_the_async_runtime() {
+        let started = Instant::now();
+        let (result, timer_elapsed) = tokio::join!(
+            run_skill_write(|| {
+                std::thread::sleep(std::time::Duration::from_millis(120));
+                Ok(())
+            }),
+            async {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                started.elapsed()
+            }
+        );
+
+        result.unwrap();
+        assert!(timer_elapsed < std::time::Duration::from_millis(80));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn skill_writes_are_serialized() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let maximum = Arc::new(AtomicUsize::new(0));
+        let operation = |active: Arc<AtomicUsize>, maximum: Arc<AtomicUsize>| {
+            run_skill_write(move || {
+                let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                maximum.fetch_max(current, Ordering::SeqCst);
+                std::thread::sleep(std::time::Duration::from_millis(40));
+                active.fetch_sub(1, Ordering::SeqCst);
+                Ok(())
+            })
+        };
+
+        let (first, second) = tokio::join!(
+            operation(active.clone(), maximum.clone()),
+            operation(active.clone(), maximum.clone())
+        );
+
+        first.unwrap();
+        second.unwrap();
+        assert_eq!(maximum.load(Ordering::SeqCst), 1);
     }
 
     fn cc_switch_test_path(name: &str) -> PathBuf {
@@ -11027,8 +12591,8 @@ mod tests {
             root.join("missing").display().to_string(),
         ];
         let settings = normalize_app_settings(settings);
-        let canonical_first = fs::canonicalize(&first).unwrap().display().to_string();
-        let canonical_second = fs::canonicalize(&second).unwrap().display().to_string();
+        let canonical_first = display_path(&fs::canonicalize(&first).unwrap());
+        let canonical_second = display_path(&fs::canonicalize(&second).unwrap());
 
         assert_eq!(settings.current_working_directory, canonical_second);
         assert_eq!(
@@ -11036,6 +12600,18 @@ mod tests {
             vec![canonical_second, canonical_first]
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn display_path_removes_windows_verbatim_prefixes() {
+        assert_eq!(
+            display_path(Path::new(r"\\?\C:\Users\xman\AgentDock")),
+            r"C:\Users\xman\AgentDock"
+        );
+        assert_eq!(
+            display_path(Path::new(r"\\?\UNC\server\share\AgentDock")),
+            r"\\server\share\AgentDock"
+        );
     }
 
     #[test]
@@ -11047,6 +12623,141 @@ mod tests {
         assert!(should_show_main_window(&settings, false));
         settings.silent_startup = false;
         assert!(should_show_main_window(&settings, true));
+    }
+
+    #[test]
+    fn skills_storage_location_accepts_original_locations() {
+        let mut settings = AppSettings::default();
+        settings.skill_storage_location = "global".to_string();
+        assert_eq!(
+            normalize_app_settings(settings).skill_storage_location,
+            "agentdock"
+        );
+
+        let mut settings = AppSettings::default();
+        settings.skill_storage_location = "project".to_string();
+        assert_eq!(
+            normalize_app_settings(settings).skill_storage_location,
+            "agentdock"
+        );
+
+        let mut settings = AppSettings::default();
+        settings.skill_storage_location = "agentdock".to_string();
+        assert_eq!(
+            normalize_app_settings(settings).skill_storage_location,
+            "agentdock"
+        );
+
+        let mut settings = AppSettings::default();
+        settings.skill_storage_location = "unified".to_string();
+        assert_eq!(
+            normalize_app_settings(settings).skill_storage_location,
+            "unified"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn agentdock_data_dir_uses_legacy_windows_roaming_appdata() {
+        let appdata = env::var_os("APPDATA").map(PathBuf::from).unwrap();
+        assert_eq!(
+            agentdock_data_dir().unwrap(),
+            appdata.join("AgentDock").join("AgentDock")
+        );
+    }
+
+    #[test]
+    fn skills_storage_dir_maps_legacy_agentdock_to_app_skills_directory() {
+        let root = env::temp_dir().join(format!(
+            "agentdock-legacy-skills-test-{}-{}",
+            std::process::id(),
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let dirs = AgentDockDirs {
+            data_dir: root.join("data"),
+            config_dir: root.join("config"),
+            runtime_dir: root.join("runtime"),
+            clients_dir: root.join("clients"),
+            skills_dir: root.join("legacy-skills"),
+            mcp_dir: root.join("mcp"),
+            backups_dir: root.join("backups"),
+            managed_configs_dir: root.join("managed-configs"),
+        };
+        let mut settings = AppSettings::default();
+        settings.skill_storage_location = "agentdock".to_string();
+        settings.current_working_directory = root.display().to_string();
+
+        assert_eq!(
+            skills_storage_dir(&dirs, &settings).unwrap(),
+            root.join("legacy-skills")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skills_storage_root_maps_agentdock_to_parent_directory() {
+        let root = env::temp_dir().join(format!(
+            "agentdock-skills-root-test-{}-{}",
+            std::process::id(),
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let dirs = AgentDockDirs {
+            data_dir: root.join("data"),
+            config_dir: root.join("config"),
+            runtime_dir: root.join("runtime"),
+            clients_dir: root.join("clients"),
+            skills_dir: root.join("data").join("skills"),
+            mcp_dir: root.join("mcp"),
+            backups_dir: root.join("backups"),
+            managed_configs_dir: root.join("managed-configs"),
+        };
+        let mut settings = AppSettings::default();
+        settings.skill_storage_location = "agentdock".to_string();
+
+        assert_eq!(
+            skills_storage_root_dir(&dirs, &settings).unwrap(),
+            root.join("data")
+        );
+        assert_eq!(
+            skills_storage_dir(&dirs, &settings).unwrap(),
+            root.join("data").join("skills")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skills_storage_dir_maps_unified_to_agents_directory() {
+        let root = env::temp_dir().join(format!(
+            "agentdock-unified-skills-test-{}-{}",
+            std::process::id(),
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let dirs = AgentDockDirs {
+            data_dir: root.join("data"),
+            config_dir: root.join("config"),
+            runtime_dir: root.join("runtime"),
+            clients_dir: root.join("clients"),
+            skills_dir: root.join("legacy-skills"),
+            mcp_dir: root.join("mcp"),
+            backups_dir: root.join("backups"),
+            managed_configs_dir: root.join("managed-configs"),
+        };
+        let mut settings = AppSettings::default();
+        settings.skill_storage_location = "unified".to_string();
+        settings.current_working_directory = root.display().to_string();
+
+        assert_eq!(
+            skills_storage_root_dir(&dirs, &settings).unwrap(),
+            dirs_home().unwrap()
+        );
+        assert_eq!(
+            skills_storage_dir(&dirs, &settings).unwrap(),
+            dirs_home().unwrap().join(".agents").join("skills")
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -11083,6 +12794,7 @@ mod tests {
         ];
 
         migrate_installed_skill_dirs(&source, &target, &skills).unwrap();
+
         assert_eq!(
             fs::read_to_string(target.join("installed/SKILL.md")).unwrap(),
             "installed"
@@ -11090,6 +12802,380 @@ mod tests {
         assert!(!target.join("available").exists());
         assert!(source.join("installed/SKILL.md").exists());
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn syncs_skill_files_by_copy() {
+        let root =
+            env::temp_dir().join(format!("agentdock-skill-copy-test-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("source.md");
+        let target = root.join("target/SKILL.md");
+        fs::write(&source, "skill-content").unwrap();
+
+        sync_skill_file(&source, &target, "copy").unwrap();
+        assert_eq!(fs::read_to_string(&target).unwrap(), "skill-content");
+        assert!(!fs::symlink_metadata(&target)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skills_cli_add_command_uses_npx_skills_add() {
+        let mut settings = AppSettings::default();
+        settings.skill_storage_location = "global".to_string();
+        settings.skill_sync_method = "copy".to_string();
+        let apps = vec![
+            "codex".to_string(),
+            "claude-code".to_string(),
+            "grok".to_string(),
+            "hermes".to_string(),
+        ];
+        let command = skills_cli_add_command(
+            "vercel-labs/agent-skills",
+            Some("vercel-optimize"),
+            &settings,
+            Some(&apps),
+        );
+
+        assert_eq!(command.program, "npx");
+        assert_eq!(
+            command.args,
+            vec![
+                "skills",
+                "add",
+                "vercel-labs/agent-skills",
+                "--yes",
+                "--global",
+                "--copy",
+                "--skill",
+                "vercel-optimize",
+                "--agent",
+                "codex",
+                "claude-code",
+                "hermes-agent"
+            ]
+        );
+    }
+
+    #[test]
+    fn skills_cli_enable_apps_builds_one_command_for_all_clients() {
+        let mut settings = AppSettings::default();
+        settings.skill_storage_location = "agentdock".to_string();
+        settings.skill_sync_method = "symlink".to_string();
+        let apps = vec![
+            "codex".to_string(),
+            "antigravity".to_string(),
+            "opencode".to_string(),
+        ];
+
+        let (command, supported) =
+            skills_cli_enable_apps_command("agentdock::shared-skill", &settings, &apps).unwrap();
+
+        assert_eq!(supported, apps);
+        assert_eq!(
+            command.args,
+            vec![
+                "skills",
+                "add",
+                "shared-skill",
+                "--yes",
+                "--agent",
+                "codex",
+                "antigravity",
+                "opencode"
+            ]
+        );
+    }
+
+    #[test]
+    fn skills_cli_remove_command_targets_skill_and_agents_without_reinstalling() {
+        let mut settings = AppSettings::default();
+        settings.skill_storage_location = "agentdock".to_string();
+        let apps = vec!["codex".to_string()];
+        let command = skills_cli_remove_command("enhance-prompt", &settings, Some(&apps));
+
+        assert_eq!(command.program, "npx");
+        assert_eq!(
+            command.args,
+            vec![
+                "skills",
+                "remove",
+                "--skill",
+                "enhance-prompt",
+                "--yes",
+                "--agent",
+                "codex"
+            ]
+        );
+    }
+
+    #[test]
+    fn skill_source_settings_preserves_clicked_skill_scope() {
+        let mut settings = AppSettings::default();
+        settings.skill_storage_location = "agentdock".to_string();
+
+        let scoped = skill_source_settings(&settings, "global");
+        let command = skills_cli_remove_command("design-review", &scoped, None);
+
+        assert_eq!(scoped.skill_storage_location, "global");
+        assert!(command.args.iter().any(|arg| arg == "--global"));
+    }
+
+    #[test]
+    fn skills_cli_remove_target_uses_the_installed_directory_name() {
+        let installed_path = env::temp_dir()
+            .join(".agents")
+            .join("skills")
+            .join("stitch-react-native");
+        let skill = SkillRecord {
+            id: "agentdock::stitch-react-native".to_string(),
+            name: "stitch::react-native".to_string(),
+            description: installed_path.display().to_string(),
+            source: "agentdock".to_string(),
+            installed: true,
+            apps: vec!["codex".to_string()],
+            updated_at: now_rfc3339(),
+        };
+
+        assert_eq!(skills_cli_remove_target(&skill), "stitch-react-native");
+    }
+
+    #[test]
+    fn removing_shared_skill_directory_preserves_independent_client_copy() {
+        let root = env::temp_dir().join(format!(
+            "agentdock-shared-skill-remove-{}-{}",
+            std::process::id(),
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ));
+        let shared = root.join(".agents/skills/demo");
+        let claude = root.join(".claude/skills/demo");
+        fs::create_dir_all(&shared).unwrap();
+        fs::create_dir_all(&claude).unwrap();
+        fs::write(shared.join("SKILL.md"), "shared").unwrap();
+        fs::write(claude.join("SKILL.md"), "claude").unwrap();
+
+        remove_shared_skill_directory(&shared, &[claude.clone()]).unwrap();
+
+        assert!(!shared.exists());
+        assert_eq!(
+            fs::read_to_string(claude.join("SKILL.md")).unwrap(),
+            "claude"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skills_cli_missing_skill_during_remove_is_success() {
+        assert!(skills_cli_missing_skill_is_success(
+            "Skills CLI 执行失败: x No matching skills found for: design-review"
+        ));
+        assert!(!skills_cli_missing_skill_is_success(
+            "Skills CLI 执行失败: Failed to clone repository"
+        ));
+    }
+
+    #[test]
+    fn skills_cli_list_command_uses_npx_skills_ls() {
+        let mut settings = AppSettings::default();
+        settings.skill_storage_location = "project".to_string();
+        let command = skills_cli_list_command(&settings);
+
+        assert_eq!(command.program, "npx");
+        assert_eq!(command.args, vec!["skills", "ls", "--json"]);
+    }
+
+    #[test]
+    fn skills_records_merge_global_and_project_scopes() {
+        let global = vec![SkillsCliListItem {
+            name: "find-skills".to_string(),
+            path: "C:/Users/xman/.agents/skills/find-skills".to_string(),
+            scope: "global".to_string(),
+            agents: vec!["Codex".to_string()],
+        }];
+        let project = vec![
+            SkillsCliListItem {
+                name: "browse".to_string(),
+                path: "C:/repo/.agents/skills/browse".to_string(),
+                scope: "project".to_string(),
+                agents: vec!["Codex".to_string(), "Gemini CLI".to_string()],
+            },
+            SkillsCliListItem {
+                name: "find-skills".to_string(),
+                path: "C:/Users/xman/.agents/skills/find-skills".to_string(),
+                scope: "global".to_string(),
+                agents: vec!["Codex".to_string()],
+            },
+        ];
+
+        let records = skills_records_from_cli_items(global.into_iter().chain(project).collect());
+
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].name, "find-skills");
+        assert_eq!(records[0].source, "global");
+        assert_eq!(records[1].name, "browse");
+        assert_eq!(records[1].source, "project");
+    }
+
+    #[test]
+    fn skills_cli_agent_names_normalize_to_agentdock_client_ids() {
+        let records = skills_records_from_cli_items(vec![SkillsCliListItem {
+            name: "mixed-agents".to_string(),
+            path: "C:/Users/xman/.agents/skills/mixed-agents".to_string(),
+            scope: "global".to_string(),
+            agents: vec![
+                "Antigravity".to_string(),
+                "Gemini CLI".to_string(),
+                "Grok Build".to_string(),
+                "Hermes Agent".to_string(),
+                "OpenCode".to_string(),
+                "Codex".to_string(),
+                "GitHub Copilot".to_string(),
+            ],
+        }]);
+
+        assert_eq!(
+            records[0].apps,
+            vec![
+                "antigravity".to_string(),
+                "codex".to_string(),
+                "grok".to_string(),
+                "hermes".to_string(),
+                "opencode".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn skills_cli_resolves_npx_from_search_paths() {
+        let root = env::temp_dir().join(format!(
+            "agentdock-skills-cli-path-{}",
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let executable = root.join(if cfg!(windows) { "npx.cmd" } else { "npx" });
+        fs::write(&executable, "").unwrap();
+
+        assert_eq!(
+            resolve_skills_cli_program_in_paths("npx", &[root.clone()]),
+            executable
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn skills_cli_prefers_windows_command_shim_over_shell_script() {
+        let root = env::temp_dir().join(format!(
+            "agentdock-skills-cli-windows-shim-{}",
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("npx"), "#!/usr/bin/env bash\n").unwrap();
+        fs::write(root.join("npx.cmd"), "@ECHO OFF\n").unwrap();
+
+        assert_eq!(
+            resolve_skills_cli_program_in_paths("npx", &[root.clone()]),
+            root.join("npx.cmd")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn skills_cli_wraps_windows_cmd_scripts() {
+        let args = vec!["skills".to_string(), "ls".to_string(), "--json".to_string()];
+        let command = command_for_executable(Path::new("C:/nvm4w/nodejs/npx.cmd"), &args);
+
+        assert_eq!(command.get_program(), "cmd.exe");
+        assert_eq!(
+            command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().to_string())
+                .collect::<Vec<_>>(),
+            vec![
+                "/D",
+                "/C",
+                "C:/nvm4w/nodejs/npx.cmd",
+                "skills",
+                "ls",
+                "--json"
+            ]
+        );
+    }
+
+    #[test]
+    fn skills_proxy_signature_uses_timestamp_method_and_path() {
+        let signature = skills_proxy_signature("secret", "1700000000", "GET", "/api/token");
+        assert_eq!(
+            signature,
+            "87b0c393015a093936bb12329c8683499cbf8f5e02e650770aa550150ebef2de"
+        );
+    }
+
+    #[test]
+    fn builds_skills_api_search_and_leaderboard_urls() {
+        let search = skills_api_search_url("https://www.skills.sh", "react ui").unwrap();
+        assert_eq!(
+            search.as_str(),
+            "https://www.skills.sh/api/search?q=react+ui&limit=100"
+        );
+
+        let leaderboard = skills_api_leaderboard_url("https://www.skills.sh", "all-time").unwrap();
+        assert_eq!(
+            leaderboard.as_str(),
+            "https://www.skills.sh/api/search?q=skill&limit=100"
+        );
+    }
+
+    #[test]
+    fn parses_skills_api_items_for_installable_package_urls() {
+        let value = serde_json::json!({
+            "skills": [{
+                "id": "vercel-labs/agent-skills/vercel-react-best-practices",
+                "skillId": "vercel-react-best-practices",
+                "slug": "vercel-react-best-practices",
+                "name": "vercel-react-best-practices",
+                "source": "vercel-labs/agent-skills",
+                "installs": 569835,
+                "url": "https://www.skills.sh/vercel-labs/agent-skills/vercel-react-best-practices"
+            }]
+        });
+
+        let items = parse_skill_directory_items(&value);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].package, "vercel-labs/agent-skills");
+        assert_eq!(items[0].owner, "vercel-labs");
+        assert_eq!(items[0].repository, "vercel-labs/agent-skills");
+        assert_eq!(items[0].downloads, Some(569835));
+    }
+
+    #[test]
+    fn cleans_ansi_control_sequences_from_command_output() {
+        assert_eq!(
+            clean_command_output("\u{1b}[?25l◇ \u{1b}[31mNo skills found\u{1b}[39m\r\n\u{1b}[1G\u{1b}[JNo valid skills found."),
+            "◇ No skills found\nNo valid skills found."
+        );
+    }
+
+    #[test]
+    fn windows_proxy_server_values_become_reqwest_proxy_urls() {
+        assert_eq!(
+            proxy_url_from_windows_proxy_server("127.0.0.1:7890"),
+            Some("http://127.0.0.1:7890".to_string())
+        );
+        assert_eq!(
+            proxy_url_from_windows_proxy_server("http=127.0.0.1:7890;https=127.0.0.1:7890"),
+            Some("http://127.0.0.1:7890".to_string())
+        );
+        assert_eq!(
+            proxy_url_from_windows_proxy_server("https://proxy.example:443"),
+            Some("https://proxy.example:443".to_string())
+        );
+        assert_eq!(proxy_url_from_windows_proxy_server("  "), None);
     }
 
     #[cfg(target_os = "macos")]
@@ -11160,45 +13246,6 @@ mod tests {
 
         fs::write(root.join("auth.json"), "{}").unwrap();
         assert!(codex_home_is_ready(&root));
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn syncs_skill_files_by_copy() {
-        let root =
-            env::temp_dir().join(format!("agentdock-skill-copy-test-{}", std::process::id()));
-        fs::create_dir_all(&root).unwrap();
-        let source = root.join("source.md");
-        let target = root.join("target/SKILL.md");
-        fs::write(&source, "skill-content").unwrap();
-
-        sync_skill_file(&source, &target, "copy").unwrap();
-        assert_eq!(fs::read_to_string(&target).unwrap(), "skill-content");
-        assert!(!fs::symlink_metadata(&target)
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn syncs_skill_files_by_symlink() {
-        let root = env::temp_dir().join(format!(
-            "agentdock-skill-symlink-test-{}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&root).unwrap();
-        let source = root.join("source.md");
-        let target = root.join("target/SKILL.md");
-        fs::write(&source, "skill-content").unwrap();
-
-        sync_skill_file(&source, &target, "symlink").unwrap();
-        assert!(fs::symlink_metadata(&target)
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        assert_eq!(fs::read_to_string(&target).unwrap(), "skill-content");
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -11956,6 +14003,61 @@ requires_openai_auth = true"#;
 
         assert!(result.is_err());
         assert!(started.elapsed() < std::time::Duration::from_millis(500));
+    }
+
+    #[test]
+    fn skills_cli_process_has_a_timeout() {
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("powershell.exe");
+            command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 5"]);
+            command
+        };
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 5"]);
+            command
+        };
+        let started = Instant::now();
+        let result = command_output_with_timeout_message(
+            &mut command,
+            std::time::Duration::from_millis(40),
+            "Skills CLI 执行超时",
+        );
+
+        assert_eq!(result.unwrap_err(), "Skills CLI 执行超时");
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn timed_command_drains_large_output_while_running() {
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("powershell.exe");
+            command.args([
+                "-NoProfile",
+                "-Command",
+                "[Console]::Out.Write(('x' * 200000))",
+            ]);
+            command
+        };
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "head -c 200000 /dev/zero | tr '\\0' x"]);
+            command
+        };
+
+        let output = command_output_with_timeout_message(
+            &mut command,
+            std::time::Duration::from_secs(3),
+            "large output timed out",
+        )
+        .unwrap();
+
+        assert!(output.status.success());
+        assert_eq!(output.stdout.len(), 200_000);
     }
 
     #[test]
