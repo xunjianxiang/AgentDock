@@ -238,6 +238,10 @@
     .skill-result-row:last-child { border-bottom: 0; }
     .skill-result-copy { min-width: 0; }
     .skill-result-copy strong { display: block; overflow: hidden; font-size: 13px; font-weight: 670; text-overflow: ellipsis; white-space: nowrap; }
+    .skill-repository-link { display: inline-flex; max-width: 100%; min-height: 22px; align-items: center; gap: 5px; border: 0; background: transparent; color: var(--accent); padding: 0; text-align: left; }
+    .skill-repository-link strong { min-width: 0; }
+    .skill-repository-link svg { width: 13px; height: 13px; flex: 0 0 13px; }
+    .skill-repository-link:hover strong { text-decoration: underline; text-underline-offset: 3px; }
     .skill-result-copy small { display: -webkit-box; margin-top: 4px; overflow: hidden; color: var(--ink-soft); font-size: 11px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
     .skill-result-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .skill-result-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
@@ -251,21 +255,40 @@
     .skill-install-option { display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: center; gap: 10px; min-height: 50px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-raised); }
     .skill-install-option input { width: 16px; height: 16px; min-height: 0; accent-color: var(--accent); }
     .skill-install-option input:disabled { opacity: .55; }
+    .skill-install-option.mandatory { border-color: #badbce; background: var(--accent-soft); }
+    .skill-install-option.mandatory input:disabled { opacity: 1; cursor: default; }
+    .skill-install-default-icon { display: grid; width: 29px; height: 29px; place-items: center; border: 1px solid #badbce; border-radius: 7px; background: var(--surface); color: var(--accent); }
+    .skill-install-default-icon svg { width: 16px; height: 16px; }
+    .skill-install-agent-logos { min-height: 20px; margin-top: 5px; gap: 3px; }
+    .skill-install-agent-logos .skill-agent-logo, .skill-install-agent-logos .skill-agent-logo .client-logo { width: 20px; height: 20px; border-radius: 5px; }
+    .skill-install-section-label { margin: 4px 0 0; color: var(--ink-soft); font-size: 11px; font-weight: 650; }
+    .skill-install-empty { margin: 0; border: 1px dashed var(--line); border-radius: 8px; color: var(--ink-soft); padding: 13px 10px; font-size: 12px; text-align: center; }
     .skill-install-option.unsupported { color: var(--ink-soft); opacity: .68; cursor: not-allowed; }
     .skill-install-option small { display: block; margin-top: 2px; color: var(--ink-soft); font-size: 11px; }
     .skill-install-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 18px; border-top: 1px solid var(--line); background: var(--surface-raised); }
-    .skill-detail-page { display: grid; gap: 0; border-bottom: 0; }
-    .skill-detail-layer { position: fixed; z-index: 34; inset: 0; display: grid; place-items: center; background: rgba(17, 24, 21, .34); padding: 22px; backdrop-filter: blur(5px); }
-    .skill-detail-modal { display: grid; width: min(860px, 100%); max-height: min(760px, calc(100dvh - 44px)); grid-template-rows: minmax(0, 1fr); overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow-float); animation: modal-in 180ms ease both; }
+    .skill-detail-page { display: grid; gap: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+    .skill-dialog-layer { position: fixed; z-index: 34; inset: 0; display: grid; place-items: center; background: rgba(17, 24, 21, .34); padding: 22px; backdrop-filter: blur(5px); }
     @keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(.99); } to { opacity: 1; transform: none; } }
-    .skill-detail-modal .skill-detail-page { min-height: 0; overflow: auto; }
     .skill-detail-hero { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 16px; padding: 18px; border-bottom: 1px solid var(--line); background: var(--surface-raised); }
     .skill-detail-title { display: flex; min-width: 0; align-items: flex-start; gap: 12px; }
     .skill-detail-title .row-icon { margin-top: 2px; }
     .skill-detail-title h3 { margin: 0; font-size: 17px; font-weight: 700; }
+    .skill-detail-source-link { min-height: 24px; font-size: inherit; font-weight: inherit; }
+    .skill-detail-source-link strong { font-size: inherit; font-weight: inherit; }
+    .skill-detail-source-link svg { width: 15px; height: 15px; }
     .skill-detail-title p { max-width: 82ch; margin: 5px 0 0; color: var(--ink-soft); font-size: 12px; overflow-wrap: anywhere; }
     .skill-detail-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-    .skill-detail-actions [data-action="close-skill-detail"] { margin-left: auto; }
+    .skill-agent-logos { display: flex; min-height: 24px; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+    .skill-agent-logo { display: inline-flex; width: 24px; height: 24px; align-items: center; justify-content: center; }
+    .skill-agent-logo .client-logo { width: 24px; height: 24px; border-radius: 6px; }
+    .source-copy .skill-agent-logos { min-height: 20px; margin-top: 3px; gap: 3px; }
+    .source-copy .skill-agent-logo, .source-copy .skill-agent-logo .client-logo { width: 20px; height: 20px; border-radius: 5px; }
+    .skill-uninstalled { display: grid; min-height: 360px; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 40px 24px; text-align: center; }
+    .skill-uninstalled-content { display: grid; max-width: 440px; justify-items: center; gap: 12px; }
+    .skill-uninstalled-icon { display: grid; width: 52px; height: 52px; place-items: center; border-radius: 50%; background: var(--accent-soft); color: var(--accent); }
+    .skill-uninstalled-icon svg { width: 24px; height: 24px; }
+    .skill-uninstalled h3 { margin: 2px 0 0; font-size: 18px; }
+    .skill-uninstalled p { margin: 0; color: var(--ink-soft); line-height: 1.6; }
     .skill-client-grid { display: grid; gap: 1px; background: var(--line); }
     .skill-client-row { display: grid; min-height: 72px; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px 12px; background: var(--surface); padding: 12px 14px; }
     .skill-client-row.grouped { align-items: start; }
@@ -275,6 +298,7 @@
     .skill-client-section-head { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 10px; background: var(--surface-raised); padding: 0 14px; }
     .skill-client-section-head h4 { margin: 0; font-size: 12px; font-weight: 680; }
     .skill-client-section-head span { color: var(--ink-faint); font: 11px var(--mono); }
+    .skill-client-group-main { display: grid; min-width: 0; gap: 8px; }
     .skill-client-copy { display: flex; min-width: 0; align-items: center; gap: 10px; }
     .skill-client-row.grouped .skill-client-copy { flex-wrap: wrap; }
     .skill-client-copy strong, .skill-client-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -289,6 +313,23 @@
     .skill-client-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
     .skill-client-chip { display: inline-flex; min-height: 34px; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-raised); }
     .skill-client-chip strong { font-size: 12px; font-weight: 650; }
+    .skill-files-section { border-top: 1px solid var(--line); background: var(--surface); }
+    .skill-files-head { display: flex; min-height: 52px; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 14px; background: var(--surface-raised); }
+    .skill-files-head h4 { margin: 0; font-size: 12px; font-weight: 680; }
+    .skill-files-head select { min-width: 220px; max-width: min(52vw, 520px); min-height: 34px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--surface); color: var(--ink); padding: 0 30px 0 10px; font: 11px var(--mono); }
+    .skill-files-workspace { display: grid; min-height: 300px; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); }
+    .skill-files-workspace.single { grid-template-columns: minmax(0, 1fr); }
+    .skill-file-list { display: grid; align-content: start; gap: 2px; overflow: auto; border-right: 1px solid var(--line); padding: 8px; }
+    .skill-file-list button { display: grid; min-height: 40px; grid-template-columns: 16px minmax(0, 1fr); align-items: center; gap: 8px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-soft); padding: 7px 8px; text-align: left; }
+    .skill-file-list button:hover { background: var(--surface-pressed); color: var(--ink); }
+    .skill-file-list button[aria-current="true"] { background: var(--accent-soft); color: var(--accent); }
+    .skill-file-list button span { overflow: hidden; font: 11px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+    .skill-file-list svg { width: 15px; height: 15px; }
+    .skill-file-content { display: grid; min-width: 0; grid-template-rows: 42px minmax(0, 1fr); }
+    .skill-file-content header { display: flex; min-width: 0; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding: 0 14px; }
+    .skill-file-content header strong { overflow: hidden; font: 11px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+    .skill-file-content pre { min-width: 0; max-height: 520px; margin: 0; overflow: auto; background: var(--surface); padding: 16px; color: var(--ink); font: 12px/1.65 var(--mono); white-space: pre; }
+    .skill-file-state { display: grid; min-height: 180px; place-items: center; padding: 28px; color: var(--ink-soft); text-align: center; }
     .skills-pager { display: flex; min-height: 48px; align-items: center; justify-content: flex-end; gap: 8px; padding: 8px 14px; border-top: 1px solid var(--line); background: var(--surface-raised); }
     .skills-pager span { margin-right: auto; color: var(--ink-soft); font-size: 11px; }
     .skills-pager .btn { min-height: 31px; }
@@ -576,7 +617,7 @@
     .confirm-icon { display: grid; width: 38px; height: 38px; margin-bottom: 15px; place-items: center; border-radius: 7px; background: var(--danger-soft); color: var(--danger); }
     .confirm-icon svg { width: 19px; height: 19px; }
     .confirm-dialog h3 { margin: 0; font-size: 18px; }
-    .confirm-dialog p { margin: 8px 0 20px; color: var(--ink-soft); line-height: 1.65; }
+    .confirm-dialog p { margin: 8px 0 20px; color: var(--ink-soft); line-height: 1.65; white-space: pre-line; }
     .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 
     @media (max-width: 1080px) {
@@ -600,7 +641,12 @@
       .launch-controls > .btn { flex: 1 1 auto; }
       .provider-card, .data-row { grid-template-columns: 1fr; }
       .skill-detail-hero, .skill-client-grid, .skill-client-row { grid-template-columns: 1fr; }
-      .skill-detail-layer { padding: 10px; }
+      .skill-client-actions { justify-content: flex-start; }
+      .skill-files-head { align-items: stretch; flex-direction: column; }
+      .skill-files-head select { width: 100%; max-width: none; }
+      .skill-files-workspace { grid-template-columns: 1fr; }
+      .skill-file-list { max-height: 180px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .skill-dialog-layer { padding: 10px; }
       .skill-detail-actions, .skill-result-actions { justify-content: flex-start; }
       .skills-search-line, .skill-result-row { grid-template-columns: 1fr; }
       .two-column, .provider-fields, .form-grid { grid-template-columns: 1fr; }
@@ -697,20 +743,20 @@
         </section>
 
         <section class="view" data-view="skills">
-          <div class="page-head"><div><h2>Skills</h2><p>搜索 skills.sh，或管理当前 Skills 存储位置</p></div><button class="btn primary" data-action="refresh-skills"><i data-lucide="refresh-cw"></i>重新检测</button></div>
-          <div class="skills-market">
+          <div class="page-head"><div><h2>Skills</h2><p>搜索 skills.sh，或管理已安装 Skills</p></div><button class="btn primary" data-action="refresh-skills"><i data-lucide="refresh-cw"></i>重新检测</button></div>
+          <div class="skills-market" id="skills-discovery-view">
             <section class="skills-search-panel">
               <form class="skills-search-line" id="skill-search-form">
                 <div class="skills-search-box"><i data-lucide="search"></i><input id="skill-search-input" type="search" placeholder="Search skills" autocomplete="off" aria-label="搜索 Skills" /><button class="btn primary" type="submit"><i data-lucide="search"></i>搜索</button></div>
               </form>
               <div class="skills-status-line">
                 <span id="skills-discovery-summary">Skills 榜单</span>
-                <span class="badge" id="skills-scope">project</span>
                 <span id="skills-summary">正在读取 skills CLI</span>
               </div>
             </section>
             <div id="skill-discovery-list"></div>
           </div>
+          <div id="skill-detail-view" hidden aria-live="polite"></div>
         </section>
 
         <section class="view" data-view="mcp">
@@ -829,18 +875,6 @@
               </div>
             </section>
 
-            <section class="settings-section" aria-labelledby="settings-skills-storage-title">
-              <header><h3 id="settings-skills-storage-title">Skills 存储位置</h3><p>切换位置时会迁移已安装的 Skills，原目录保留作为安全副本</p></header>
-              <div class="settings-segmented" id="settings-skills-storage-options" aria-label="Skills 存储位置"></div>
-              <p class="settings-path-hint" id="settings-skills-path"></p>
-            </section>
-
-            <section class="settings-section" aria-labelledby="settings-skills-sync-title">
-              <header><h3 id="settings-skills-sync-title">Skills 同步方式</h3><p>决定 AgentDock 如何把 Skills 写入已启用的客户端</p></header>
-              <div class="settings-segmented" id="settings-skills-sync-options" aria-label="Skills 同步方式"></div>
-              <p class="settings-path-hint" id="settings-sync-hint"></p>
-            </section>
-
             <section class="settings-section" aria-labelledby="settings-skills-api-title">
               <header><h3 id="settings-skills-api-title">Skills API 代理</h3><p>启用后请求 skills proxy token 和 skills.sh API 时使用系统代理；关闭后强制直连</p></header>
               <label class="settings-toggle-row">
@@ -853,10 +887,7 @@
         </section>
       </main>
 
-      <div class="skill-detail-layer" id="skill-detail-layer" hidden role="dialog" aria-modal="true" aria-labelledby="skill-detail-title">
-        <div class="skill-detail-modal" id="skill-detail-modal"></div>
-      </div>
-      <div class="skill-detail-layer" id="skill-install-layer" hidden role="dialog" aria-modal="true" aria-labelledby="skill-install-title">
+      <div class="skill-dialog-layer" id="skill-install-layer" hidden role="dialog" aria-modal="true" aria-labelledby="skill-install-title">
         <section class="skill-install-dialog">
           <header class="skill-install-head"><div><h3 id="skill-install-title">安装 Skill</h3><p id="skill-install-package"></p></div><button class="icon-btn" data-action="close-skill-install" title="关闭" aria-label="关闭"><i data-lucide="x"></i></button></header>
           <div class="skill-install-body"><div class="skill-install-options" id="skill-install-options"></div></div>
@@ -1036,7 +1067,7 @@
     const DEFAULT_GEMINI_MODEL = "gemini-3.6-flash";
     const APP_ORDER = Object.keys(APP_META);
     const AGENTS_SKILL_CLIENTS = new Set(["codex", "antigravity", "opencode"]);
-    const SKILLS_CLI_CLIENTS = new Set(["claude-code", "codex", "antigravity", "opencode", "openclaw", "hermes"]);
+    const SKILLS_CLI_CLIENTS = new Set(["claude-code", "codex", "antigravity", "grok", "opencode", "openclaw", "hermes"]);
     const VIEW_META = {
       clients: ["客户端", "安装并配置 AI 编程客户端"],
       software: ["推荐软件", "安装和更新 AgentDock 推荐工具"],
@@ -1050,45 +1081,41 @@
       "zh-TW": {
         "nav.clients": "客戶端", "nav.software": "推薦軟體", "nav.stats": "統計", "nav.logs": "診斷", "nav.settings": "設定",
         "view.clients.subtitle": "安裝並設定 AI 程式設計客戶端", "view.software.subtitle": "安裝和更新 AgentDock 推薦工具", "view.skills.subtitle": "使用 skills CLI 管理", "view.mcp.subtitle": "伺服器與客戶端設定", "view.stats.subtitle": "Token、請求和成本趨勢", "view.logs.subtitle": "主動檢查客戶端、供應商和本機設定", "view.settings.subtitle": "介面、視窗、客戶端和 Skills 偏好",
-        "page.software.title": "推薦軟體", "page.software.desc": "由 AgentDock 維護的軟體目錄，安裝時自動選擇可用下載來源並驗證檔案。", "page.skills.desc": "使用 skills CLI 管理 project / global 作用域", "page.mcp.title": "MCP 伺服器", "page.mcp.desc": "統一管理伺服器，並同步至各客戶端的實際設定檔", "page.stats.title": "用量統計", "page.stats.desc": "彙總本機客戶端工作階段中的 Token、請求和可計算成本", "page.logs.title": "診斷中心", "page.logs.desc": "檢查本機目錄、客戶端、供應商連線、MCP 和統計資料，不讀取或顯示金鑰",
+        "page.software.title": "推薦軟體", "page.software.desc": "由 AgentDock 維護的軟體目錄，安裝時自動選擇可用下載來源並驗證檔案。", "page.skills.desc": "使用 skills CLI 管理 Skills", "page.mcp.title": "MCP 伺服器", "page.mcp.desc": "統一管理伺服器，並同步至各客戶端的實際設定檔", "page.stats.title": "用量統計", "page.stats.desc": "彙總本機客戶端工作階段中的 Token、請求和可計算成本", "page.logs.title": "診斷中心", "page.logs.desc": "檢查本機目錄、客戶端、供應商連線、MCP 和統計資料，不讀取或顯示金鑰",
         "settings.title": "設定", "settings.subtitle": "調整 AgentDock 的介面、視窗、客戶端和 Skills 行為", "settings.general": "通用", "settings.autoSave": "設定自動儲存", "settings.saving": "正在儲存", "settings.saved": "設定已儲存", "settings.error": "儲存失敗",
         "settings.language": "介面語言", "settings.languageDesc": "選擇 AgentDock 顯示介面使用的語言", "settings.theme": "外觀主題", "settings.themeDesc": "淺色、深色或跟隨目前系統外觀", "theme.light": "淺色", "theme.dark": "深色", "theme.system": "跟隨系統",
         "settings.window": "視窗行為", "settings.windowDesc": "控制 AgentDock 如何隨系統啟動以及關閉視窗後的行為", "window.launch": "開機時啟動 AgentDock", "window.launchDesc": "登入系統後自動啟動桌面程式", "window.silent": "靜默啟動", "window.silentDesc": "開機啟動時保持視窗隱藏，可從系統匣開啟", "window.tray": "關閉視窗時最小化到系統匣", "window.trayDesc": "保留背景程序和正在進行的安裝或同步工作",
         "settings.terminal": "偏好終端機", "settings.terminalDesc": "從 AgentDock 啟動命令列客戶端時優先使用此終端機，不可用時自動回退", "settings.clients": "客戶端清單", "settings.clientsDesc": "選擇客戶端頁面顯示的項目，並調整排列順序", "client.visible": "顯示於客戶端清單", "client.hidden": "已從客戶端清單隱藏", "client.moveUp": "上移", "client.moveDown": "下移", "client.keepOne": "至少保留一個客戶端",
-        "settings.storage": "Skills 儲存位置", "settings.storageDesc": "選擇 AgentDock 資料目錄或統一 .agents 目錄", "storage.agentdock": "AgentDock 目錄", "storage.unified": "統一目錄", "settings.sync": "Skills 同步方式", "settings.syncDesc": "決定 AgentDock 如何寫入已啟用的客戶端", "sync.symlink": "符號連結", "sync.copy": "複製檔案", "sync.symlinkHint": "修改儲存目錄中的 Skill 後，客戶端會立即讀取最新內容。Windows 需要允許建立符號連結。", "sync.copyHint": "相容所有系統；修改 Skill 後需要再次同步到客戶端。",
         "source.settingsCategory": "設定分類", "source.settingsHint": "通用設定會自動儲存到本機", "source.general": "通用", "status.connected": "本機服務已連線", "status.deviceConnected": "已連線", "terminal.system": "系統預設終端機", "search.filter": "篩選目前清單", "search.logs": "搜尋診斷項目", "search.mcp": "搜尋伺服器"
       },
       "en-US": {
         "nav.clients": "Clients", "nav.software": "Software", "nav.stats": "Usage", "nav.logs": "Diagnostics", "nav.settings": "Settings",
         "view.clients.subtitle": "Install and configure AI coding clients", "view.software.subtitle": "Install and update recommended tools", "view.skills.subtitle": "Managed by skills CLI", "view.mcp.subtitle": "Servers and client configuration", "view.stats.subtitle": "Token, request, and cost trends", "view.logs.subtitle": "Check clients, providers, and local configuration", "view.settings.subtitle": "Interface, window, client, and Skills preferences",
-        "page.software.title": "Recommended software", "page.software.desc": "A catalog maintained by AgentDock with automatic mirror selection and package verification.", "page.skills.desc": "Manage project / global scopes with the skills CLI", "page.mcp.title": "MCP servers", "page.mcp.desc": "Manage servers once and synchronize them to real client configuration files", "page.stats.title": "Usage statistics", "page.stats.desc": "Aggregate tokens, requests, and calculable costs from local client sessions", "page.logs.title": "Diagnostics", "page.logs.desc": "Check directories, clients, providers, MCP, and usage data without reading or displaying secrets",
+        "page.software.title": "Recommended software", "page.software.desc": "A catalog maintained by AgentDock with automatic mirror selection and package verification.", "page.skills.desc": "Manage Skills with the skills CLI", "page.mcp.title": "MCP servers", "page.mcp.desc": "Manage servers once and synchronize them to real client configuration files", "page.stats.title": "Usage statistics", "page.stats.desc": "Aggregate tokens, requests, and calculable costs from local client sessions", "page.logs.title": "Diagnostics", "page.logs.desc": "Check directories, clients, providers, MCP, and usage data without reading or displaying secrets",
         "settings.title": "Settings", "settings.subtitle": "Configure AgentDock interface, windows, clients, and Skills", "settings.general": "General", "settings.autoSave": "Settings save automatically", "settings.saving": "Saving", "settings.saved": "Settings saved", "settings.error": "Save failed",
         "settings.language": "Interface language", "settings.languageDesc": "Choose the language used by the AgentDock interface", "settings.theme": "Appearance", "settings.themeDesc": "Use light, dark, or the current system appearance", "theme.light": "Light", "theme.dark": "Dark", "theme.system": "System",
         "settings.window": "Window behavior", "settings.windowDesc": "Control startup and what happens when the main window closes", "window.launch": "Launch AgentDock at login", "window.launchDesc": "Start the desktop app automatically after signing in", "window.silent": "Silent startup", "window.silentDesc": "Keep the window hidden at startup and open it from the system tray", "window.tray": "Minimize to tray on close", "window.trayDesc": "Keep background installs and synchronization running",
         "settings.terminal": "Preferred terminal", "settings.terminalDesc": "Use this terminal when launching CLI clients, with automatic fallback to the system terminal", "settings.clients": "Client list", "settings.clientsDesc": "Choose which clients appear and arrange their order", "client.visible": "Shown in the client list", "client.hidden": "Hidden from the client list", "client.moveUp": "Move up", "client.moveDown": "Move down", "client.keepOne": "Keep at least one client visible",
-        "settings.storage": "Skills storage", "settings.storageDesc": "Choose the AgentDock data directory or the unified .agents directory", "storage.agentdock": "AgentDock directory", "storage.unified": "Unified directory", "settings.sync": "Skills sync method", "settings.syncDesc": "Choose how AgentDock writes Skills to enabled clients", "sync.symlink": "Symbolic links", "sync.copy": "Copy files", "sync.symlinkHint": "Clients immediately read edits from the storage directory. Windows must allow symbolic links.", "sync.copyHint": "Sync again after editing a Skill when using copied files.",
         "source.settingsCategory": "Settings", "source.settingsHint": "General settings are saved locally and automatically", "source.general": "General", "status.connected": "Local service connected", "status.deviceConnected": "Connected", "terminal.system": "System default terminal", "search.filter": "Filter current list", "search.logs": "Search diagnostics", "search.mcp": "Search servers"
       },
       "ja-JP": {
         "nav.clients": "クライアント", "nav.software": "おすすめ", "nav.stats": "統計", "nav.logs": "診断", "nav.settings": "設定",
         "view.clients.subtitle": "AI コーディングクライアントの導入と設定", "view.software.subtitle": "推奨ツールのインストールと更新", "view.skills.subtitle": "skills CLI で管理", "view.mcp.subtitle": "サーバーとクライアント設定", "view.stats.subtitle": "Token・リクエスト・コストの推移", "view.logs.subtitle": "クライアント、プロバイダー、ローカル設定を確認", "view.settings.subtitle": "表示、ウィンドウ、クライアント、Skills の設定",
-        "page.software.title": "おすすめソフトウェア", "page.software.desc": "AgentDock が管理するカタログです。利用可能なダウンロード元を自動選択し、ファイルを検証します。", "page.skills.desc": "skills CLI で project / global スコープを管理", "page.mcp.title": "MCP サーバー", "page.mcp.desc": "サーバーを一元管理し、各クライアントの実際の設定ファイルへ同期", "page.stats.title": "使用量統計", "page.stats.desc": "ローカルセッションから Token、リクエスト、算出可能なコストを集計", "page.logs.title": "診断センター", "page.logs.desc": "秘密情報を読み取らずにディレクトリ、クライアント、プロバイダー、MCP、統計を確認",
+        "page.software.title": "おすすめソフトウェア", "page.software.desc": "AgentDock が管理するカタログです。利用可能なダウンロード元を自動選択し、ファイルを検証します。", "page.skills.desc": "skills CLI で Skills を管理", "page.mcp.title": "MCP サーバー", "page.mcp.desc": "サーバーを一元管理し、各クライアントの実際の設定ファイルへ同期", "page.stats.title": "使用量統計", "page.stats.desc": "ローカルセッションから Token、リクエスト、算出可能なコストを集計", "page.logs.title": "診断センター", "page.logs.desc": "秘密情報を読み取らずにディレクトリ、クライアント、プロバイダー、MCP、統計を確認",
         "settings.title": "設定", "settings.subtitle": "AgentDock の表示、ウィンドウ、クライアント、Skills を調整", "settings.general": "一般", "settings.autoSave": "設定は自動保存されます", "settings.saving": "保存中", "settings.saved": "保存しました", "settings.error": "保存に失敗しました",
         "settings.language": "表示言語", "settings.languageDesc": "AgentDock の表示に使用する言語を選択", "settings.theme": "外観テーマ", "settings.themeDesc": "ライト、ダーク、またはシステム設定に合わせる", "theme.light": "ライト", "theme.dark": "ダーク", "theme.system": "システム",
         "settings.window": "ウィンドウの動作", "settings.windowDesc": "システム起動時とウィンドウを閉じた後の動作を設定", "window.launch": "ログイン時に AgentDock を起動", "window.launchDesc": "サインイン後にデスクトップアプリを自動起動", "window.silent": "サイレント起動", "window.silentDesc": "起動時は非表示にし、システムトレイから開く", "window.tray": "閉じるとトレイへ最小化", "window.trayDesc": "バックグラウンドのインストールと同期を継続",
         "settings.terminal": "優先ターミナル", "settings.terminalDesc": "CLI クライアントの起動に使用し、利用不可の場合はシステム既定へ切り替え", "settings.clients": "クライアント一覧", "settings.clientsDesc": "表示するクライアントと並び順を設定", "client.visible": "クライアント一覧に表示", "client.hidden": "クライアント一覧で非表示", "client.moveUp": "上へ", "client.moveDown": "下へ", "client.keepOne": "少なくとも 1 つ表示してください",
-        "settings.storage": "Skills の保存場所", "settings.storageDesc": "AgentDock データディレクトリまたは統一 .agents ディレクトリを選択", "storage.agentdock": "AgentDock ディレクトリ", "storage.unified": "統一ディレクトリ", "settings.sync": "Skills の同期方法", "settings.syncDesc": "AgentDock が有効なクライアントへ書き込む方法", "sync.symlink": "シンボリックリンク", "sync.copy": "ファイルをコピー", "sync.symlinkHint": "保存場所での変更をクライアントがすぐ読み取ります。Windows ではシンボリックリンクの許可が必要です。", "sync.copyHint": "コピー方式では Skill を編集した後に再同期してください。",
         "source.settingsCategory": "設定カテゴリ", "source.settingsHint": "一般設定はローカルへ自動保存されます", "source.general": "一般", "status.connected": "ローカルサービス接続済み", "status.deviceConnected": "接続済み", "terminal.system": "システム既定のターミナル", "search.filter": "現在の一覧を絞り込む", "search.logs": "診断項目を検索", "search.mcp": "サーバーを検索"
       },
       "de-DE": {
         "nav.clients": "Clients", "nav.software": "Software", "nav.stats": "Statistik", "nav.logs": "Diagnose", "nav.settings": "Einstellungen",
         "view.clients.subtitle": "KI-Coding-Clients installieren und konfigurieren", "view.software.subtitle": "Empfohlene Tools installieren und aktualisieren", "view.skills.subtitle": "Mit skills CLI verwaltet", "view.mcp.subtitle": "Server- und Client-Konfiguration", "view.stats.subtitle": "Token-, Anfrage- und Kostentrends", "view.logs.subtitle": "Clients, Anbieter und lokale Konfiguration prüfen", "view.settings.subtitle": "Oberfläche, Fenster, Clients und Skills",
-        "page.software.title": "Empfohlene Software", "page.software.desc": "Ein von AgentDock gepflegter Katalog mit automatischer Spiegelwahl und Paketprüfung.", "page.skills.desc": "Project / Global Scopes mit der skills CLI verwalten", "page.mcp.title": "MCP-Server", "page.mcp.desc": "Server zentral verwalten und in echte Client-Konfigurationen synchronisieren", "page.stats.title": "Nutzungsstatistik", "page.stats.desc": "Tokens, Anfragen und berechenbare Kosten lokaler Sitzungen zusammenfassen", "page.logs.title": "Diagnosezentrum", "page.logs.desc": "Verzeichnisse, Clients, Anbieter, MCP und Statistiken prüfen, ohne Schlüssel anzuzeigen",
+        "page.software.title": "Empfohlene Software", "page.software.desc": "Ein von AgentDock gepflegter Katalog mit automatischer Spiegelwahl und Paketprüfung.", "page.skills.desc": "Skills mit der skills CLI verwalten", "page.mcp.title": "MCP-Server", "page.mcp.desc": "Server zentral verwalten und in echte Client-Konfigurationen synchronisieren", "page.stats.title": "Nutzungsstatistik", "page.stats.desc": "Tokens, Anfragen und berechenbare Kosten lokaler Sitzungen zusammenfassen", "page.logs.title": "Diagnosezentrum", "page.logs.desc": "Verzeichnisse, Clients, Anbieter, MCP und Statistiken prüfen, ohne Schlüssel anzuzeigen",
         "settings.title": "Einstellungen", "settings.subtitle": "Oberfläche, Fenster, Clients und Skills von AgentDock konfigurieren", "settings.general": "Allgemein", "settings.autoSave": "Einstellungen werden automatisch gespeichert", "settings.saving": "Speichern", "settings.saved": "Gespeichert", "settings.error": "Speichern fehlgeschlagen",
         "settings.language": "Oberflächensprache", "settings.languageDesc": "Sprache der AgentDock-Oberfläche auswählen", "settings.theme": "Darstellung", "settings.themeDesc": "Helles, dunkles oder systemweites Erscheinungsbild", "theme.light": "Hell", "theme.dark": "Dunkel", "theme.system": "System",
         "settings.window": "Fensterverhalten", "settings.windowDesc": "Startverhalten und Schließen des Hauptfensters steuern", "window.launch": "AgentDock bei Anmeldung starten", "window.launchDesc": "Desktop-App nach der Anmeldung automatisch starten", "window.silent": "Stiller Start", "window.silentDesc": "Fenster beim Start ausblenden und über die Taskleiste öffnen", "window.tray": "Beim Schließen in Taskleiste minimieren", "window.trayDesc": "Installationen und Synchronisierung im Hintergrund fortsetzen",
         "settings.terminal": "Bevorzugtes Terminal", "settings.terminalDesc": "Dieses Terminal für CLI-Clients verwenden; bei Bedarf auf das Systemterminal zurückfallen", "settings.clients": "Client-Liste", "settings.clientsDesc": "Sichtbare Clients und ihre Reihenfolge festlegen", "client.visible": "In der Client-Liste sichtbar", "client.hidden": "In der Client-Liste ausgeblendet", "client.moveUp": "Nach oben", "client.moveDown": "Nach unten", "client.keepOne": "Mindestens einen Client sichtbar lassen",
-        "settings.storage": "Skills-Speicherort", "settings.storageDesc": "AgentDock-Datenverzeichnis oder einheitliches .agents-Verzeichnis auswählen", "storage.agentdock": "AgentDock-Verzeichnis", "storage.unified": "Einheitliches Verzeichnis", "settings.sync": "Skills-Synchronisierung", "settings.syncDesc": "Festlegen, wie AgentDock in aktivierte Clients schreibt", "sync.symlink": "Symbolische Links", "sync.copy": "Dateien kopieren", "sync.symlinkHint": "Clients lesen Änderungen sofort. Unter Windows müssen symbolische Links erlaubt sein.", "sync.copyHint": "Nach Änderungen an einem Skill erneut synchronisieren.",
         "source.settingsCategory": "Kategorien", "source.settingsHint": "Allgemeine Einstellungen werden lokal automatisch gespeichert", "source.general": "Allgemein", "status.connected": "Lokaler Dienst verbunden", "status.deviceConnected": "Verbunden", "terminal.system": "Systemterminal", "search.filter": "Aktuelle Liste filtern", "search.logs": "Diagnose durchsuchen", "search.mcp": "Server durchsuchen"
       }
     };
@@ -1259,13 +1286,13 @@
       const cached = JSON.parse(localStorage.getItem(STARTUP_CACHE_KEY) || "null");
       if (cached?.version === 3 && cached.data && Date.now() - Number(cached.savedAt || 0) < 30 * 24 * 60 * 60 * 1000) startupCache = cached.data;
     } catch {}
-    const defaultSettings = { language: document.documentElement.lang || "zh-CN", theme: cachedTheme, ccSwitchInitialCheckCompleted: false, launchOnStartup: false, silentStartup: false, minimizeToTrayOnClose: false, preferredTerminal: "terminal", visibleClients: [...APP_ORDER], clientOrder: [...APP_ORDER], currentWorkingDirectory: "", recentWorkingDirectories: [], skillStorageLocation: "agentdock", skillSyncMethod: "copy", skillApiProxyEnabled: true };
+    const defaultSettings = { language: document.documentElement.lang || "zh-CN", theme: cachedTheme, ccSwitchInitialCheckCompleted: false, launchOnStartup: false, silentStartup: false, minimizeToTrayOnClose: false, preferredTerminal: "terminal", visibleClients: [...APP_ORDER], clientOrder: [...APP_ORDER], currentWorkingDirectory: "", recentWorkingDirectories: [], skillApiProxyEnabled: true };
 
     const state = {
       desktop: Boolean(window.__TAURI_INTERNALS__), status: startupCache?.status || null, settings: { ...defaultSettings, ...(startupCache?.settings || {}), language: defaultSettings.language, theme: defaultSettings.theme }, ready: startupCache?.ready || null, providers: startupCache?.providers || [], skills: startupCache?.skills || [], mcpServers: startupCache?.mcpServers || [], softwareCatalog: startupCache?.softwareCatalog || [], appUpdate: null, appUpdateChecking: false, appUpdateInstalling: false, backgroundRefreshing: false,
       usageStats: null, usageDays: 7, trendMetric: "totalTokens", breakdown: "client",
-      activeView: "clients", activeClient: "codex", contextQuery: "", softwareFilter: "all", skillFilter: "all", inspectingSkillId: "", skillDetailOpen: false, diagnosticFilter: "all",
-      skillsDiscovery: null, skillsDiscoveryView: "all-time", skillsDiscoveryQuery: "", skillsDiscoveryLoading: false, skillsDiscoveryPages: {},
+      activeView: "clients", activeClient: "codex", contextQuery: "", softwareFilter: "all", skillsWorkspaceView: "discovery", inspectingSkillId: "", uninstalledSkill: null, diagnosticFilter: "all",
+      skillsDiscovery: null, skillsDiscoveryView: "all-time", skillsDiscoveryQuery: "", skillsDiscoveryLoading: false, skillsDiscoveryPages: {}, skillTargetGroups: {}, skillFileViews: {},
       inFlightOperations: new Set(), clientOperations: new Map(), launchingClients: new Set(), workspaceMenuOpen: false, providerModelMenuOpen: false, providerModelOptions: [], providerModelRequest: 0, providerReadyRequest: 0, settingsRevision: 0, settingsSaveChain: Promise.resolve(), logs: [], diagnostics: null, diagnosticRunning: false, ccSwitchImport: null, ccSwitchImportResult: null, ccSwitchImportChecking: false, editingProviderId: null, selectedPresetId: "custom", providerFormDirty: false, providerSecretRequest: 0, editingMcpId: null, selectedMcpPreset: "custom", inspectingMcpId: null, mcpToolsResult: null, mcpToolsError: "", activeMcpToolName: "", mcpToolsRequest: 0, configManuallyEdited: false, configImportRequest: 0, confirmResolve: null, skillInstallDraft: null
     };
     try {
@@ -1277,16 +1304,23 @@
     const mock = {
       status: {
         appVersion: "0.1.21", platform: "browser-preview", dataDir: "/AgentDock/AgentDock", configDir: "/AgentDock/config", homeDir: "/Users/demo", managedRuntimeReady: true,
-        clients: APP_ORDER.map((id) => { const installed = ["codex", "claude-desktop"].includes(id); return { id, name: APP_META[id].name, installed, version: installed ? id === "codex" ? "0.91.0" : "detected" : null, executable: installed ? `/Applications/${id}` : null, configPath: installed ? `/AgentDock/${id}/config` : null, managedByAgentdock: id === "codex" }; })
+        clients: APP_ORDER.map((id) => { const installed = ["codex", "claude-desktop", "grok", "hermes"].includes(id); return { id, name: APP_META[id].name, installed, version: installed ? id === "codex" ? "0.91.0" : "detected" : null, executable: installed ? `/Applications/${id}` : null, configPath: installed ? `/AgentDock/${id}/config` : null, managedByAgentdock: id === "codex" }; })
       },
       appUpdate: { supported: true, available: true, currentVersion: "0.1.21", latestVersion: "0.1.22", downloadSize: 12582912 },
       ccSwitchImport: { available: true, sourcePath: "~/.cc-switch/cc-switch.db", sourceKind: "SQLite", fingerprint: "browser-preview-cc-switch", providerCount: 4, appCounts: { "claude-code": 2, codex: 1, antigravity: 1 } },
       settings: { ...defaultSettings },
       providers: [{ id: "packycode-preview", name: "PackyCode", notes: "主力线路", websiteUrl: "https://www.packyapi.com", presetId: "packycode", providerType: "openai", baseUrl: "https://www.packyapi.com/v1", apiFormat: "responses", enabledApps: ["codex"], activeApps: ["codex"], codexModel: "gpt-5.6-sol", geminiModel: "gemini-3.5-pro", claudeSonnetModel: "claude-sonnet-5", claudeHaikuModel: "claude-haiku-4-5", claudeOpusModel: "claude-opus-4-8", active: true, apiKeyConfigured: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }],
       skills: [
-        { id: "review", name: "review", description: "/AgentDock/project/.agents/skills/review", source: "project", installed: true, apps: ["codex", "claude-code"], updatedAt: new Date().toISOString() },
-        { id: "browse", name: "browse", description: "/AgentDock/project/.agents/skills/browse", source: "project", installed: true, apps: ["codex"], updatedAt: new Date().toISOString() },
-        { id: "find-skills", name: "find-skills", description: "~/.agents/skills/find-skills", source: "global", installed: true, apps: ["codex"], updatedAt: new Date().toISOString() }
+        { id: "global::review", name: "review", description: "/Users/demo/.agents/skills/review", source: "global", installed: true, apps: ["codex", "claude-code"], installations: [
+          { id: "installation::review-agents", path: "/Users/demo/.agents/skills/review", apps: ["claude-code"], isLink: false, linkTarget: null },
+          { id: "installation::review-codex", path: "/Users/demo/.codex/skills/review", apps: ["codex"], isLink: false, linkTarget: null }
+        ], updatedAt: new Date().toISOString() },
+        { id: "global::browse", name: "browse", description: "/Users/demo/.codex/skills/browse", source: "global", installed: true, apps: ["codex"], installations: [
+          { id: "installation::browse-codex", path: "/Users/demo/.codex/skills/browse", apps: ["codex"], isLink: false, linkTarget: null }
+        ], updatedAt: new Date().toISOString() },
+        { id: "global::find-skills", name: "find-skills", description: "/Users/demo/.agents/skills/find-skills", source: "global", sourceUrl: "https://github.com/vercel-labs/skills", installed: true, apps: ["codex", "antigravity", "opencode"], installations: [
+          { id: "installation::find-agents", path: "/Users/demo/.agents/skills/find-skills", apps: ["codex", "antigravity", "opencode"], isLink: false, linkTarget: null }
+        ], updatedAt: new Date().toISOString() }
       ],
       skillDiscovery: [
         { id: "agent-skills", name: "agent-skills", description: "Official skill collection for agent workflows", package: "vercel-labs/agent-skills", owner: "vercel-labs", repository: "agent-skills", url: "https://github.com/vercel-labs/agent-skills", score: 98, downloads: 12000 },
@@ -1340,6 +1374,40 @@
     function closeConfirm(result) {
       document.getElementById("confirm-layer").hidden = true;
       const resolve = state.confirmResolve; state.confirmResolve = null; resolve?.(result);
+    }
+
+    async function confirmSkillUninstall(skill, { installationId = null, apps = [] } = {}) {
+      const impact = await call("inspect_skill_uninstall", { skillId: skill.id, installationId });
+      const affectedApps = apps.length ? apps : impact.apps;
+      const agentNames = affectedApps.map((id) => clientMeta(normalizeSkillClientId(id)).name).join("、") || tr("未识别 Agent", "未识别 Agent");
+      let message;
+      if (installationId) {
+        message = trf("confirm.uninstallSkillInstallationMessage", "将卸载 {name} 的这个安装位置：\n{path}\n受影响 Agent：{agents}", { name: skill.name, path: impact.paths.join("\n"), agents: agentNames });
+      } else if (apps.length) {
+        message = trf("confirm.uninstallSkillAgentsMessage", "将从以下 Agent 卸载 {name}：{agents}", { name: skill.name, agents: agentNames });
+      } else {
+        message = trf("confirm.uninstallAllSkillMessage", "将卸载 {name} 的 {count} 个安装位置。", { name: skill.name, count: impact.installationCount });
+      }
+      if (impact.dependentPaths?.length) {
+        message += `\n\n${trf("confirm.uninstallDependentPaths", "为保留其他安装位置，以下链接会先转为独立副本：\n{paths}", { paths: impact.dependentPaths.join("\n") })}`;
+      }
+      return confirmAction(tr("确认卸载", "确认卸载"), message, tr("确认卸载", "确认卸载"));
+    }
+
+    async function refreshAfterSkillUninstall(original, result) {
+      delete state.skillTargetGroups[original.id];
+      delete state.skillFileViews[original.id];
+      if (result.installed) {
+        state.skillsWorkspaceView = "detail";
+        state.inspectingSkillId = original.id;
+        state.uninstalledSkill = null;
+      } else {
+        state.uninstalledSkill = { name: original.name };
+        state.inspectingSkillId = "";
+        state.skillsWorkspaceView = "uninstalled";
+      }
+      await refreshInstalledSkills();
+      if (result.installed) loadSkillDetailData(original.id, { force: true });
     }
 
     function mockParseProviderConfig(appId, content) {
@@ -1439,11 +1507,48 @@
       if (command === "open_path") return { ok: true, message: `已打开 ${args.path}` };
       if (command === "open_external") return { ok: true, message: `已打开 ${args.url}` };
       if (command === "list_skills") return structuredClone(mock.skills);
+      if (command === "list_skill_target_groups") {
+        const skill = mock.skills.find((item) => item.id === args.skillId);
+        if (!skill) throw new Error("Skill 安装状态已变化，请刷新后重试");
+        const home = mock.status.homeDir || "/Users/demo";
+        const slug = skill.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+        const candidates = [
+          { path: `${home}/.agents/skills/${slug}`, apps: ["codex", "antigravity", "opencode"] },
+          { path: `${home}/.claude/skills/${slug}`, apps: ["claude-code"] },
+          { path: `${home}/.grok/skills/${slug}`, apps: ["grok"] },
+          { path: `${home}/.openclaw/skills/${slug}`, apps: ["openclaw"] },
+          { path: `${home}/.hermes/skills/${slug}`, apps: ["hermes"] }
+        ];
+        const installedPaths = new Set((skill.installations || []).map((item) => cleanDisplayPath(item.path).toLowerCase()));
+        return structuredClone(candidates.filter((item) => !installedPaths.has(cleanDisplayPath(item.path).toLowerCase())));
+      }
+      if (command === "list_skill_files") {
+        const multiple = args.installationId === "installation::review-agents";
+        return multiple
+          ? [{ path: "SKILL.md", size: 148, previewable: true, reason: null }, { path: "references/checklist.md", size: 92, previewable: true, reason: null }]
+          : [{ path: "SKILL.md", size: 148, previewable: true, reason: null }];
+      }
+      if (command === "read_skill_file") {
+        const content = args.relativePath === "SKILL.md"
+          ? "---\nname: review\ndescription: Review code changes\n---\n\n# Review\n\nInspect correctness, regressions, and missing tests."
+          : "# Checklist\n\n- Read the changed behavior\n- Verify tests\n- Report findings by severity";
+        return { path: args.relativePath, content, previewable: true, reason: null };
+      }
       if (command === "discover_skills") { const query = String(args.query || "").toLowerCase(); const items = mock.skillDiscovery.filter((item) => !query || [item.name, item.description, item.package, item.owner].some((value) => String(value).toLowerCase().includes(query))); return query ? { mode: "search", query, view: args.view || "trending", items: structuredClone(items), sections: [] } : { mode: "leaderboard", query: "", view: args.view || "all-time", items: structuredClone(items), sections: ["all-time", "trending", "hot"].map((id) => ({ id, title: id === "all-time" ? "All-time" : id[0].toUpperCase() + id.slice(1), items: structuredClone(items) })) }; }
-      if (command === "install_skill") { const id = args.input.id; const skill = { id: id.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""), name: id, description: mock.settings.skillStorageLocation === "unified" ? `${mock.status.homeDir || "/Users/demo"}/.agents/skills` : `${mock.status.dataDir || "/AgentDock/data"}/skills`, source: mock.settings.skillStorageLocation, installed: true, apps: args.input.apps || ["codex"], updatedAt: new Date().toISOString() }; mock.skills = [skill, ...mock.skills.filter((item) => item.id !== skill.id)]; return structuredClone(skill); }
-      if (command === "remove_shared_skill") { const skill = mock.skills.find((item) => item.id === args.skillId); skill.apps = skill.apps.filter((app) => !AGENTS_SKILL_CLIENTS.has(normalizeSkillClientId(app))); skill.installed = skill.apps.length > 0; return structuredClone(skill); }
-      if (command === "uninstall_skill") { const skill = mock.skills.find((item) => item.id === args.skillId) || { id: args.skillId, name: args.skillId, description: "", source: mock.settings.skillStorageLocation, installed: false, apps: [] }; mock.skills = mock.skills.filter((item) => item.id !== args.skillId); skill.installed = false; return structuredClone(skill); }
-      if (command === "toggle_skill_app") { const skill = mock.skills.find((item) => item.id === args.skillId); skill.apps = args.enabled ? [...new Set([...skill.apps, args.app])] : skill.apps.filter((item) => item !== args.app); return structuredClone(skill); }
+      if (command === "install_skill") { const name = args.input.id; const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); const path = `${mock.status.homeDir || "/Users/demo"}/.agents/skills/${slug}`; const skill = { id: `global::${slug}`, name, description: path, source: "global", installed: true, apps: args.input.apps || ["codex"], installations: [{ id: `installation::${slug}-agents`, path, apps: args.input.apps || ["codex"], isLink: false, linkTarget: null }], updatedAt: new Date().toISOString() }; mock.skills = [skill, ...mock.skills.filter((item) => item.id !== skill.id)]; return structuredClone(skill); }
+      if (command === "inspect_skill_uninstall") { const skill = mock.skills.find((item) => item.id === args.skillId); if (!skill) throw new Error("Skill 安装状态已变化，请刷新后重试"); const installations = args.installationId ? skill.installations.filter((item) => item.id === args.installationId) : skill.installations; if (!installations.length) throw new Error("未找到安装位置，可能已被其他程序修改"); return { skillId: skill.id, installationId: args.installationId || null, installationCount: installations.length, paths: installations.map((item) => item.path), apps: [...new Set(installations.flatMap((item) => item.apps || []))], dependentPaths: [] }; }
+      if (command === "uninstall_skill_installation") { const skill = mock.skills.find((item) => item.id === args.skillId); if (!skill) throw new Error("Skill 安装状态已变化，请刷新后重试"); skill.installations = skill.installations.filter((item) => item.id !== args.installationId); skill.apps = [...new Set(skill.installations.flatMap((item) => item.apps || []))]; skill.installed = skill.installations.length > 0; if (!skill.installed) mock.skills = mock.skills.filter((item) => item.id !== skill.id); return structuredClone(skill); }
+      if (command === "remove_shared_skill") { const skill = mock.skills.find((item) => item.id === args.skillId); skill.installations = (skill.installations || []).filter((item) => !cleanDisplayPath(item.path).includes("/.agents/skills/")); skill.apps = [...new Set(skill.installations.flatMap((item) => item.apps || []))]; skill.installed = skill.installations.length > 0; if (!skill.installed) mock.skills = mock.skills.filter((item) => item.id !== skill.id); return structuredClone(skill); }
+      if (command === "uninstall_skill") { const skill = mock.skills.find((item) => item.id === args.skillId) || { id: args.skillId, name: args.skillId, description: "", source: "global", installed: false, apps: [], installations: [] }; mock.skills = mock.skills.filter((item) => item.id !== args.skillId); skill.installed = false; skill.apps = []; skill.installations = []; return structuredClone(skill); }
+      if (command === "toggle_skill_app") { const skill = mock.skills.find((item) => item.id === args.skillId); if (args.enabled) { skill.apps = [...new Set([...skill.apps, args.app])]; } else { skill.installations = (skill.installations || []).map((item) => ({ ...item, apps: (item.apps || []).filter((app) => app !== args.app) })).filter((item) => item.apps.length); skill.apps = [...new Set(skill.installations.flatMap((item) => item.apps))]; skill.installed = skill.installations.length > 0; if (!skill.installed) mock.skills = mock.skills.filter((item) => item.id !== skill.id); } return structuredClone(skill); }
+      if (command === "enable_skill_apps") {
+        const skill = mock.skills.find((item) => item.id === args.skillId); if (!skill) throw new Error("未找到 Skill");
+        const app = args.apps[0]; const roots = { "claude-code": ".claude", grok: ".grok", openclaw: ".openclaw", hermes: ".hermes" }; const root = roots[app] || ".agents";
+        const path = `${mock.status.homeDir}/${root}/skills/${skill.name}`;
+        skill.installations.push({ id: `installation::${skill.name}-${app}`, path, apps: [...args.apps], isLink: false, linkTarget: null });
+        skill.apps = [...new Set(skill.installations.flatMap((item) => item.apps || []))];
+        return { skill: structuredClone(skill), method: "copy" };
+      }
       if (command === "sync_skills") return { writtenFiles: [], message: "Skills 已同步" };
       if (command === "list_mcp_servers") return structuredClone(mock.mcpServers);
       if (command === "upsert_mcp_server") { const record = { ...args.input, updatedAt: new Date().toISOString() }; mock.mcpServers = [record, ...mock.mcpServers.filter((item) => item.id !== record.id)]; return structuredClone(record); }
@@ -1527,7 +1632,7 @@
 
       const pageCopy = {
         software: [tr("page.software.title", "推荐软件"), tr("page.software.desc", "由 AgentDock 维护的软件目录，安装过程自动选择可用下载源并校验文件。")],
-        skills: ["Skills", tr("page.skills.desc", "管理当前 Skills 存储位置")],
+        skills: ["Skills", tr("page.skills.desc", "使用 skills CLI 管理 Skills")],
         mcp: [tr("page.mcp.title", "MCP 服务器"), tr("page.mcp.desc", "统一管理服务器，并同步到各客户端的真实配置文件")],
         stats: [tr("page.stats.title", "用量统计"), tr("page.stats.desc", "汇总本机客户端会话中的 Token、请求和可计算成本")],
         logs: [tr("page.logs.title", "诊断中心"), tr("page.logs.desc", "检查本机目录、客户端、供应商连接、MCP 和统计数据，不读取或展示密钥")],
@@ -1541,9 +1646,7 @@
         ["settings-window-title", "settings.window", "窗口行为", "settings.windowDesc", "控制 AgentDock 如何随系统启动以及关闭窗口后的行为"],
         ["settings-terminal-title", "settings.terminal", "首选终端", "settings.terminalDesc", "从 AgentDock 启动命令行客户端时优先使用此终端，不可用时自动回退到系统终端"],
         ["settings-clients-title", "settings.clients", "客户端列表", "settings.clientsDesc", "选择客户端页面显示的项目，并调整它们的排列顺序"],
-        ["settings-import-title", "settings.import", "配置迁移", "settings.importDesc", "从本机已有工具导入供应商配置，原配置会在写入前备份"],
-        ["settings-skills-storage-title", "settings.storage", "Skills 存储位置", "settings.storageDesc", "选择 AgentDock 数据目录或统一 .agents 目录"],
-        ["settings-skills-sync-title", "settings.sync", "Skills 同步方式", "settings.syncDesc", "决定 AgentDock 如何把 Skills 写入已启用的客户端"]
+        ["settings-import-title", "settings.import", "配置迁移", "settings.importDesc", "从本机已有工具导入供应商配置，原配置会在写入前备份"]
       ];
       for (const [id, titleKey, title, descriptionKey, description] of settingsSections) { setText(`#${id}`, tr(titleKey, title)); setText(`#${id} + p`, tr(descriptionKey, description)); }
       const windowRows = [
@@ -1650,15 +1753,14 @@
 
     async function refreshInstalledSkills() {
       state.skills = await call("list_skills");
-      if (state.inspectingSkillId && !state.skills.some((skill) => skill.id === state.inspectingSkillId)) {
+      if (state.skillsWorkspaceView === "detail" && state.inspectingSkillId && !state.skills.some((skill) => skill.id === state.inspectingSkillId)) {
         state.inspectingSkillId = "";
-        state.skillDetailOpen = false;
+        state.skillsWorkspaceView = "discovery";
       }
       persistStartupCache();
       renderHeader();
       renderSkills();
       renderSourceSidebar();
-      renderSkillDetailModal();
       refreshIcons();
     }
 
@@ -1880,9 +1982,12 @@
       return `<button class="source-filter ${resolvedActive ? "active" : ""}" data-action="${escapeHtml(resolvedAction || "")}" data-id="${escapeHtml(id)}" aria-pressed="${resolvedActive}"><i data-lucide="${iconName}"></i><span>${label}</span>${resolvedCount === null ? "" : `<b class="source-filter-count">${formatNumber(resolvedCount)}</b>`}</button>`;
     }
     function renderSkillSourceSidebar(list, items) {
-      const globalCount = state.skills.filter((skill) => skillSource(skill) === "global").length;
-      const agentdockCount = state.skills.filter((skill) => skillSource(skill) === "agentdock").length;
-      list.innerHTML = `<div class="source-group-label">${tr("筛选", "筛选")}</div>${sourceFilterButton("all", tr("全部 Skills", "全部 Skills"), "layout-list", state.skills.length, state.skillFilter === "all", "set-skill-filter")}${sourceFilterButton("global", tr("全局目录", "全局目录"), "globe-2", globalCount, state.skillFilter === "global", "set-skill-filter")}${sourceFilterButton("agentdock", tr("AgentDock 目录", "AgentDock 目录"), "archive", agentdockCount, state.skillFilter === "agentdock", "set-skill-filter")}<div class="source-rule"></div><div class="source-group-label"><span>${tr("Skill 列表", "Skill 列表")}</span><b>${items.length}</b></div>${items.map((skill) => `<button class="source-item" data-action="inspect-skill" data-id="${escapeHtml(skill.id)}"><span class="source-symbol"><i data-lucide="wand-sparkles"></i></span><span class="source-copy"><strong>${escapeHtml(skill.name)}</strong><small>${escapeHtml(skillSidebarMeta(skill))}</small></span><i class="source-state ${skillIsInstalled(skill) ? "ok" : ""}"></i></button>`).join("")}`;
+      const discoveryActive = state.skillsWorkspaceView === "discovery";
+      const rows = items.map((skill) => {
+        const active = state.skillsWorkspaceView === "detail" && state.inspectingSkillId === skill.id;
+        return `<button class="source-item ${active ? "active" : ""}" data-action="inspect-skill" data-id="${escapeHtml(skill.id)}" aria-pressed="${active}"><span class="source-symbol"><i data-lucide="wand-sparkles"></i></span><span class="source-copy"><strong>${escapeHtml(skill.name)}</strong>${skillAgentLogos(skill)}</span><i class="source-state ${skillIsInstalled(skill) ? "ok" : ""}"></i></button>`;
+      }).join("");
+      list.innerHTML = `<div class="skills-source-primary"><button class="source-filter ${discoveryActive ? "active" : ""}" data-action="show-skill-discovery" aria-pressed="${discoveryActive}"><span class="source-symbol"><i data-lucide="compass"></i></span><span class="source-copy"><strong>${tr("探索发现", "探索发现")}</strong><small>${tr("搜索和安装 Skills", "搜索和安装 Skills")}</small></span><i data-lucide="chevron-right"></i></button></div><div class="source-group-label"><span>${tr("已安装", "已安装")}</span><b>${items.length}</b></div>${rows || `<div class="source-empty"><i data-lucide="package-open"></i>${tr("尚未安装 Skills", "尚未安装 Skills")}</div>`}`;
     }
     function renderSourceSidebar() {
       const title = document.getElementById("source-title"); const summary = document.getElementById("source-summary"); const list = document.getElementById("source-list"); const action = document.getElementById("source-action"); const search = document.getElementById("command-search"); const searchShell = search.closest(".command-search");
@@ -1913,7 +2018,6 @@
         const items = filteredSkills();
         renderSkillSourceSidebar(list, items);
         return;
-        list.innerHTML = `<div class="source-group-label">${tr("筛选", "筛选")}</div>${sourceFilterButton("all", tr("全部 Skills", "全部 Skills"), "layout-list", state.skills.length, state.skillFilter === "all", "set-skill-filter")}${sourceFilterButton("installed", tr("已安装", "已安装"), "circle-check", state.skills.filter(skillIsInstalled).length, state.skillFilter === "installed", "set-skill-filter")}${sourceFilterButton("updates", tr("可更新", "可更新"), "arrow-up-circle", 0, state.skillFilter === "updates", "set-skill-filter")}<div class="source-rule"></div><div class="source-group-label"><span>${tr("Skill 列表", "Skill 列表")}</span><b>${items.length}</b></div>${items.map((skill) => `<button class="source-item" data-action="inspect-skill" data-id="${escapeHtml(skill.id)}"><span class="source-symbol"><i data-lucide="wand-sparkles"></i></span><span class="source-copy"><strong>${escapeHtml(skill.name)}</strong><small>${escapeHtml(skillSidebarMeta(skill))}</small></span><i class="source-state ${skillIsInstalled(skill) ? "ok" : ""}"></i></button>`).join("")}`;
       } else if (state.activeView === "mcp") {
         const servers = state.mcpServers.filter((server) => contextMatches(server.name, server.id, server.description, server.tags?.join(" ")));
         const rows = servers.map((server) => { const description = server.id === "filesystem" ? tr(server.description, server.description) : server.description; return `<button class="source-item ${state.inspectingMcpId === server.id ? "active" : ""}" data-action="inspect-mcp" data-id="${escapeHtml(server.id)}"><span class="source-symbol"><i data-lucide="blocks"></i></span><span class="source-copy"><strong>${escapeHtml(server.name || server.id)}</strong><small>${escapeHtml(description || server.transport?.toUpperCase() || "MCP")}</small></span><b class="source-count">${server.apps?.length || 0}</b></button>`; }).join("");
@@ -2055,49 +2159,149 @@
 
     function renderSkills() {
       const summary = document.getElementById("skills-summary");
-      const scope = document.getElementById("skills-scope");
+      const discovery = document.getElementById("skills-discovery-view");
+      const detail = document.getElementById("skill-detail-view");
       if (summary) summary.textContent = trf("skills.summary", "{count} 个已安装 Skills", { count: state.skills.length });
-      if (scope) scope.textContent = state.settings?.skillStorageLocation === "unified" ? tr("storage.unified", "统一目录") : tr("storage.agentdock", "AgentDock 目录");
-      if (state.inspectingSkillId && !state.skills.some((skill) => skill.id === state.inspectingSkillId)) state.inspectingSkillId = "";
-      renderSkillDiscovery();
-      renderSkillDetailModal();
+      let skill = state.skills.find((item) => item.id === state.inspectingSkillId);
+      if (state.skillsWorkspaceView === "detail" && !skill) {
+        state.skillsWorkspaceView = "discovery";
+        state.inspectingSkillId = "";
+      }
+      const showingDiscovery = state.skillsWorkspaceView === "discovery";
+      discovery.hidden = !showingDiscovery;
+      detail.hidden = showingDiscovery;
+      if (showingDiscovery) {
+        detail.innerHTML = "";
+        renderSkillDiscovery();
+      } else if (state.skillsWorkspaceView === "uninstalled") {
+        detail.innerHTML = renderSkillUninstalledPage(state.uninstalledSkill);
+      } else {
+        detail.innerHTML = renderSkillDetailsPage(skill);
+      }
+    }
+    function skillAgentIds(skill) {
+      const ids = [
+        ...(skill?.apps || []),
+        ...(skill?.installations || []).flatMap((installation) => installation.apps || [])
+      ].map(normalizeSkillClientId).filter((id) => APP_META[id]);
+      return [...new Set(ids)];
+    }
+    function skillAgentLogos(skill, extraClass = "") {
+      const ids = skillAgentIds(skill);
+      if (!ids.length) return "";
+      const names = ids.map((id) => clientMeta(id).name).join("、");
+      return `<span class="skill-agent-logos ${escapeHtml(extraClass)}" aria-label="${escapeHtml(names)}">${ids.map((id) => `<span class="skill-agent-logo" title="${escapeHtml(clientMeta(id).name)}">${clientLogo(id)}</span>`).join("")}</span>`;
+    }
+    function skillEnabledClientGroups(skill) {
+      const installations = skill?.installations || [];
+      if (!installations.length) return "";
+      const rows = installations.map((installation) => {
+        const path = cleanDisplayPath(installation.path);
+        const openLabel = tr("打开目录", "打开目录");
+        const uninstallLabel = tr("卸载", "卸载");
+        const clients = skillAgentIds(installation).map((clientId) => {
+          const meta = clientMeta(clientId);
+          return `<span class="skill-client-chip">${clientLogo(clientId)}<strong>${escapeHtml(meta.name)}</strong></span>`;
+        }).join("");
+        return `<article class="skill-client-row grouped"><div class="skill-client-group-main"><div class="skill-client-copy">${clients}</div><div class="skill-client-path only"><code title="${escapeHtml(path)}">${escapeHtml(path)}</code></div></div><div class="skill-client-actions"><button class="icon-btn" data-action="open-path" data-path="${escapeHtml(installation.path)}" data-exact="true" title="${openLabel}" aria-label="${openLabel}"><i data-lucide="folder-open"></i></button><button class="btn danger" data-action="uninstall-skill-installation" data-id="${escapeHtml(skill.id)}" data-installation="${escapeHtml(installation.id)}"><i data-lucide="trash-2"></i>${uninstallLabel}</button></div></article>`;
+      }).join("");
+      return `<section class="skill-client-section"><div class="skill-client-section-head"><h4>${tr("已启用的客户端", "已启用的客户端")}</h4><span>${formatNumber(skillAgentIds(skill).length)}</span></div>${rows}</section>`;
+    }
+    function skillAvailableTargetGroups(skill) {
+      const result = state.skillTargetGroups[skill.id];
+      if (!result || result.loading) return `<section class="skill-client-section"><div class="skill-client-section-head"><h4>${tr("可启用的客户端", "可启用的客户端")}</h4></div><div class="skill-file-state" aria-live="polite">${tr("正在读取可启用目录", "正在读取可启用目录")}</div></section>`;
+      if (result.error) return `<section class="skill-client-section"><div class="skill-client-section-head"><h4>${tr("可启用的客户端", "可启用的客户端")}</h4></div><div class="skill-file-state" role="alert"><div>${escapeHtml(result.error)}<br><button class="btn" data-action="retry-skill-targets" data-id="${escapeHtml(skill.id)}">${tr("重试", "重试")}</button></div></div></section>`;
+      const installedClients = new Set(localInstalledClientTargets().filter((clientId) => clientId !== "claude-desktop"));
+      const groups = (result.groups || []).map((group) => ({ ...group, apps: (group.apps || []).filter((app) => installedClients.has(normalizeSkillClientId(app))) })).filter((group) => group.apps.length);
+      if (!groups.length) return "";
+      const rows = groups.map((group) => {
+        const clients = group.apps.map((clientId) => { const id = normalizeSkillClientId(clientId); return `<span class="skill-client-chip">${clientLogo(id)}<strong>${escapeHtml(clientMeta(id).name)}</strong></span>`; }).join("");
+        return `<article class="skill-client-row grouped available"><div class="skill-client-group-main"><div class="skill-client-copy">${clients}</div><div class="skill-client-path skill-target-path only"><code title="${escapeHtml(cleanDisplayPath(group.path))}">${escapeHtml(cleanDisplayPath(group.path))}</code></div></div><div class="skill-client-actions"><button class="btn primary" data-action="enable-skill-target" data-id="${escapeHtml(skill.id)}" data-clients="${escapeHtml(group.apps.join(","))}"><i data-lucide="plus"></i>${tr("启用", "启用")}</button></div></article>`;
+      }).join("");
+      return `<section class="skill-client-section"><div class="skill-client-section-head"><h4>${tr("可启用的客户端", "可启用的客户端")}</h4><span>${formatNumber(groups.reduce((count, group) => count + group.apps.length, 0))}</span></div>${rows}</section>`;
     }
     function renderSkillDetailsPage(skill) {
-      return `<section class="skill-detail-page"><div class="skill-detail-hero"><div class="skill-detail-title"><span class="row-icon"><i data-lucide="wand-sparkles"></i></span><div><h3 id="skill-detail-title">${escapeHtml(skill.name)}</h3><p>${escapeHtml(skill.source || "Skill")}</p></div></div><div class="skill-detail-actions"><button class="btn danger" data-action="uninstall-skill" data-id="${escapeHtml(skill.id)}">${tr("移除 Skill", "移除 Skill")}</button><button class="icon-btn" data-action="close-skill-detail" title="${tr("关闭", "关闭")}" aria-label="${tr("关闭", "关闭")}"><i data-lucide="x"></i></button></div></div><div class="skill-client-grid">${skillInstalledPathRow(skill)}${skillClientRows(skill)}</div></section>`;
+      const uninstallLabel = (skill.installations || []).length > 1 ? tr("卸载全部", "卸载全部") : tr("卸载", "卸载");
+      const openRepositoryLabel = tr("打开 GitHub 仓库", "打开 GitHub 仓库");
+      const sourceTitle = skill.sourceUrl ? `<h3 id="skill-detail-title"><button type="button" class="skill-repository-link skill-detail-source-link" data-action="open-external" data-url="${escapeHtml(skill.sourceUrl)}" title="${escapeHtml(openRepositoryLabel)}" aria-label="${escapeHtml(`${openRepositoryLabel}: ${skill.name}`)}"><strong>${escapeHtml(skill.name)}</strong><i data-lucide="external-link"></i></button></h3>` : `<h3 id="skill-detail-title">${escapeHtml(skill.name)}</h3>`;
+      return `<section class="skill-detail-page"><div class="skill-detail-hero"><div class="skill-detail-title"><span class="row-icon"><i data-lucide="wand-sparkles"></i></span><div>${sourceTitle}${skillAgentLogos(skill, "detail")}</div></div><div class="skill-detail-actions"><button class="btn danger" data-action="uninstall-skill" data-id="${escapeHtml(skill.id)}"><i data-lucide="trash-2"></i>${uninstallLabel}</button></div></div><div class="skill-client-grid">${skillEnabledClientGroups(skill)}${skillAvailableTargetGroups(skill)}</div>${renderSkillFileViewer(skill)}</section>`;
     }
-    function renderSkillDetailModal() {
-      const layer = document.getElementById("skill-detail-layer");
-      const modal = document.getElementById("skill-detail-modal");
-      if (!layer || !modal) return;
-      const skill = state.skills.find((item) => item.id === state.inspectingSkillId);
-      const open = Boolean(state.skillDetailOpen && skill);
-      layer.hidden = !open;
-      modal.innerHTML = open ? renderSkillDetailsPage(skill) : "";
+    async function loadSkillTargetGroups(skillId, { force = false } = {}) {
+      const current = state.skillTargetGroups[skillId];
+      if (!force && (current?.loading || current?.groups)) return;
+      state.skillTargetGroups[skillId] = { loading: true, groups: [], error: "" };
+      renderSkills(); refreshIcons();
+      try {
+        const groups = await call("list_skill_target_groups", { skillId });
+        state.skillTargetGroups[skillId] = { loading: false, groups, error: "" };
+      } catch (error) {
+        state.skillTargetGroups[skillId] = { loading: false, groups: [], error: errorText(error) };
+      }
+      if (state.inspectingSkillId === skillId) { renderSkills(); refreshIcons(); }
     }
-    function closeSkillDetail() {
-      state.skillDetailOpen = false;
-      renderSkillDetailModal();
-      refreshIcons();
+    function preferredSkillInstallation(skill) {
+      return [...(skill.installations || [])].sort((left, right) => Number(left.isLink) - Number(right.isLink) || cleanDisplayPath(left.path).localeCompare(cleanDisplayPath(right.path)))[0] || null;
     }
-    function skillClientRows(skill) {
-      const clients = localInstalledClientTargets();
-      if (!clients.length) return `<div class="empty">${tr("本机没有可管理的客户端", "本机没有可管理的客户端")}</div>`;
-      const agentsClients = clients.filter((clientId) => clientUsesSharedAgentsDir(skill, clientId));
-      const singleClients = clients.filter((clientId) => !clientUsesSharedAgentsDir(skill, clientId));
-      const agentsEnabled = agentsClients.some((clientId) => skillEnabledForClient(skill, clientId));
-      const enabledClients = [
-        ...(agentsEnabled ? agentsClients : []),
-        ...singleClients.filter((clientId) => skillEnabledForClient(skill, clientId))
-      ];
-      const availableClients = [
-        ...(agentsEnabled ? [] : agentsClients),
-        ...singleClients.filter((clientId) => !skillEnabledForClient(skill, clientId))
-      ];
-      return skillClientSection(tr("已启用的客户端", "已启用的客户端"), enabledClients, skill, true) + skillClientSection(tr("可启用的客户端", "可启用的客户端"), availableClients, skill, false);
+    async function loadSkillFileContent(skillId, installationId, relativePath) {
+      const view = state.skillFileViews[skillId];
+      if (!view || view.installationId !== installationId) return;
+      const entry = view.files.find((file) => file.path === relativePath);
+      view.selectedPath = relativePath;
+      view.contentLoading = true;
+      view.content = null;
+      renderSkills(); refreshIcons();
+      if (entry && !entry.previewable) {
+        view.contentLoading = false;
+        view.content = { path: entry.path, content: null, previewable: false, reason: entry.reason };
+      } else {
+        try { view.content = await call("read_skill_file", { skillId, installationId, relativePath }); }
+        catch (error) { view.content = { path: relativePath, content: null, previewable: false, reason: errorText(error) }; }
+        view.contentLoading = false;
+      }
+      if (state.inspectingSkillId === skillId) { renderSkills(); refreshIcons(); }
     }
-    function skillInstalledPathRow(skill) {
-      const path = skillInstallPath(skill, []);
-      return path ? `<article class="skill-client-row">${skillClientPath(path, "only")}</article>` : "";
+    async function loadSkillFiles(skillId, installationId = "", { force = false } = {}) {
+      const skill = state.skills.find((item) => item.id === skillId);
+      if (!skill) return;
+      const selectedInstallation = (skill.installations || []).find((item) => item.id === installationId) || preferredSkillInstallation(skill);
+      if (!selectedInstallation) return;
+      const current = state.skillFileViews[skillId];
+      if (!force && current?.installationId === selectedInstallation.id && (current.loading || current.files?.length)) return;
+      state.skillFileViews[skillId] = { installationId: selectedInstallation.id, loading: true, error: "", files: [], selectedPath: "", content: null, contentLoading: false };
+      renderSkills(); refreshIcons();
+      try {
+        const files = await call("list_skill_files", { skillId, installationId: selectedInstallation.id });
+        const selectedPath = files.find((file) => file.path.toLowerCase() === "skill.md")?.path || files[0]?.path || "";
+        Object.assign(state.skillFileViews[skillId], { loading: false, files, selectedPath });
+        if (selectedPath) return loadSkillFileContent(skillId, selectedInstallation.id, selectedPath);
+      } catch (error) {
+        Object.assign(state.skillFileViews[skillId], { loading: false, error: errorText(error) });
+      }
+      if (state.inspectingSkillId === skillId) { renderSkills(); refreshIcons(); }
+    }
+    function renderSkillFileViewer(skill) {
+      const installations = skill.installations || [];
+      if (!installations.length) return "";
+      const view = state.skillFileViews[skill.id];
+      const selectedInstallation = installations.find((item) => item.id === view?.installationId) || preferredSkillInstallation(skill);
+      const installationPicker = installations.length > 1 ? `<select class="skill-file-installation" data-change="skill-file-installation" data-id="${escapeHtml(skill.id)}" aria-label="${tr("选择文件来源", "选择文件来源")}">${installations.map((installation) => `<option value="${escapeHtml(installation.id)}" ${installation.id === selectedInstallation?.id ? "selected" : ""}>${escapeHtml(cleanDisplayPath(installation.path))}</option>`).join("")}</select>` : "";
+      const head = `<div class="skill-files-head"><h4>${tr("Skill 文件", "Skill 文件")} <span class="badge">${tr("只读", "只读")}</span></h4>${installationPicker}</div>`;
+      if (!view || view.loading) return `<section class="skill-files-section">${head}<div class="skill-file-state" aria-live="polite">${tr("正在读取 Skill 文件", "正在读取 Skill 文件")}</div></section>`;
+      if (view.error) return `<section class="skill-files-section">${head}<div class="skill-file-state" role="alert"><div>${escapeHtml(view.error)}<br><button class="btn" data-action="retry-skill-files" data-id="${escapeHtml(skill.id)}">${tr("重试", "重试")}</button></div></div></section>`;
+      if (!view.files.length) return `<section class="skill-files-section">${head}<div class="skill-file-state" aria-live="polite">${tr("没有可展示的文件", "没有可展示的文件")}</div></section>`;
+      const multiple = view.files.length > 1;
+      const list = multiple ? `<nav class="skill-file-list" aria-label="${tr("Skill 文件列表", "Skill 文件列表")}">${view.files.map((file) => `<button data-action="select-skill-file" data-id="${escapeHtml(skill.id)}" data-path="${escapeHtml(file.path)}" aria-current="${file.path === view.selectedPath}"><i data-lucide="${file.previewable ? "file-text" : "file-warning"}"></i><span title="${escapeHtml(file.path)}">${escapeHtml(file.path)}</span></button>`).join("")}</nav>` : "";
+      const content = view.contentLoading ? tr("正在读取文件", "正在读取文件") : view.content?.previewable ? view.content.content || "" : view.content?.reason || tr("无法预览该文件", "无法预览该文件");
+      const contentPanel = `<section class="skill-file-content readonly" aria-live="polite"><header><strong>${escapeHtml(view.selectedPath || view.files[0].path)}</strong><span class="badge">${formatNumber(view.files.find((file) => file.path === view.selectedPath)?.size || 0)} B</span></header><pre><code>${escapeHtml(content)}</code></pre></section>`;
+      return `<section class="skill-files-section">${head}<div class="skill-files-workspace ${multiple ? "" : "single"}">${list}${contentPanel}</div></section>`;
+    }
+    function loadSkillDetailData(skillId, { force = false } = {}) {
+      void loadSkillTargetGroups(skillId, { force });
+      void loadSkillFiles(skillId, "", { force });
+    }
+    function renderSkillUninstalledPage(skill) {
+      const name = skill?.name || tr("Skill", "Skill");
+      return `<section class="skill-uninstalled"><div class="skill-uninstalled-content"><span class="skill-uninstalled-icon"><i data-lucide="circle-check"></i></span><h3>${trf("{name} 已卸载", "{name} 已卸载", { name: escapeHtml(name) })}</h3><p>${tr("该 Skill 已从所选 Agent 中卸载。", "该 Skill 已从所选 Agent 中卸载。")}</p><button class="btn primary" data-action="show-skill-discovery"><i data-lucide="compass"></i>${tr("探索发现", "探索发现")}</button></div></section>`;
     }
     function skillClientSection(title, clients, skill) {
       if (!clients.length) return "";
@@ -2116,7 +2320,7 @@
         return `<span class="skill-client-chip">${clientLogo(clientId)}<strong>${escapeHtml(meta.name)}</strong></span>`;
       }).join("");
       const action = enabled
-        ? `<button class="btn danger" data-action="quick-uninstall-skill-group" data-id="${escapeHtml(skill.id)}" data-clients="${escapeHtml(clients.join(","))}"><i data-lucide="minus-circle"></i>${tr("移除", "移除")}</button>`
+        ? `<button class="btn danger" data-action="quick-uninstall-skill-group" data-id="${escapeHtml(skill.id)}" data-clients="${escapeHtml(clients.join(","))}"><i data-lucide="trash-2"></i>${tr("卸载", "卸载")}</button>`
         : `<button class="btn primary" data-action="quick-install-skill-group" data-id="${escapeHtml(skill.id)}" data-clients="${escapeHtml(clients.join(","))}"><i data-lucide="plus"></i>${tr("启用", "启用")}</button>`;
       return `<article class="skill-client-row grouped"><div class="skill-client-copy">${chips}</div><div class="skill-client-actions">${action}</div></article>`;
     }
@@ -2126,14 +2330,14 @@
       const meta = clientMeta(clientId);
       const action = skillClientAction(skill, clientId);
       const description = isEnabled ? tr("独立安装目录", "独立安装目录") : supported ? tr("点击启用到此客户端", "点击启用到此客户端") : tr("Skills CLI 不支持此客户端", "Skills CLI 不支持此客户端");
-      return `<article class="skill-client-row"><div class="skill-client-copy">${clientLogo(clientId)}<span><strong>${escapeHtml(meta.name)}</strong><small>${description}</small></span></div><div class="row-actions">${action}</div>${isEnabled ? skillClientPath(skillInstallPath(skill, [clientId])) : ""}</article>`;
+      return `<article class="skill-client-row"><div class="skill-client-copy">${clientLogo(clientId)}<span><strong>${escapeHtml(meta.name)}</strong><small>${description}</small></span></div><div class="row-actions">${action}</div></article>`;
     }
     function skillClientAction(skill, clientId) {
       const isEnabled = skillEnabledForClient(skill, clientId);
       const action = !isEnabled && !clientSupportsSkillsCli(clientId)
         ? `<button class="btn" disabled>${tr("不支持", "不支持")}</button>`
         : isEnabled
-        ? `<button class="btn danger" data-action="quick-uninstall-skill" data-id="${escapeHtml(skill.id)}" data-client="${escapeHtml(clientId)}"><i data-lucide="minus-circle"></i>${tr("移除", "移除")}</button>`
+        ? `<button class="btn danger" data-action="quick-uninstall-skill" data-id="${escapeHtml(skill.id)}" data-client="${escapeHtml(clientId)}"><i data-lucide="trash-2"></i>${tr("卸载", "卸载")}</button>`
         : `<button class="btn primary" data-action="quick-install-skill" data-id="${escapeHtml(skill.name || skill.id)}" data-client="${escapeHtml(clientId)}"><i data-lucide="plus"></i>${tr("启用", "启用")}</button>`;
       return action;
     }
@@ -2142,92 +2346,6 @@
     }
     function clientSupportsSkillsCli(clientId) {
       return SKILLS_CLI_CLIENTS.has(clientId);
-    }
-    function skillClientPath(pathInfo, extraClass = "") {
-      const path = typeof pathInfo === "string" ? { display: pathInfo, open: pathInfo } : pathInfo;
-      if (!path?.display || !path?.open) return "";
-      const className = extraClass ? `skill-client-path ${escapeHtml(extraClass)}` : "skill-client-path";
-      const label = path.label ? `<span class="badge">${escapeHtml(path.label)}</span>` : "";
-      return `<span class="${className}">${label}<code title="${escapeHtml(path.display)}">${escapeHtml(path.display)}</code><button class="icon-btn" data-action="open-path" data-path="${escapeHtml(path.open)}" data-exact="${path.exact ? "true" : ""}" title="${tr("打开目录", "打开目录")}" aria-label="${tr("打开目录", "打开目录")}"><i data-lucide="folder-open"></i></button></span>`;
-    }
-    function skillInstallPath(skill, clients) {
-      const recorded = skillRecordedPath(skill);
-      const clientId = clients.length === 1 ? clients[0] : "";
-      const independent = clientId && !clientSupportsAgentsSkills(clientId);
-      const clientPath = independent ? skillClientInstallDir(skill, clientId) : "";
-      const raw = clientPath || recorded || skillInstallDir(skill, clients);
-      const label = independent ? `${skillClientShortLabel(clientId)} only` : skillPathLabel(skill, raw);
-      return raw ? { display: cleanDisplayPath(raw), open: raw, exact: Boolean(clientPath || recorded), label } : null;
-    }
-    function skillRecordedPath(skill) {
-      const raw = String(skill?.description || "").trim();
-      if (!raw || raw.length > 600 || /^https?:\/\//i.test(raw)) return "";
-      if (/^[a-z]:[\\/]/i.test(raw) || raw.startsWith("\\\\") || raw.startsWith("/")) return raw;
-      return "";
-    }
-    function skillPathLabel(skill, rawPath) {
-      if (skillUsesAgentsPath(rawPath)) return tr(".agents 通用", ".agents 通用");
-      const apps = (skill.apps || []).map(normalizeSkillClientId).filter(Boolean);
-      const unique = [...new Set(apps)];
-      if (unique.length === 1) return `${skillClientShortLabel(unique[0])} only`;
-      return unique.length ? unique.map(skillClientShortLabel).join(", ") : skillSourceLabel(skill);
-    }
-    function skillUsesAgentsPath(rawPath) {
-      return cleanDisplayPath(rawPath).toLowerCase().includes("/.agents/skills/");
-    }
-    function skillClientShortLabel(clientId) {
-      if (clientId === "antigravity") return "agy";
-      if (clientId === "claude-code") return "claude";
-      if (clientId === "claude-desktop") return "desktop";
-      return clientId;
-    }
-    function skillInstallDir(skill, clients) {
-      const base = skillInstallBaseDir(skill);
-      return base ? `${base.replace(/[\\/]$/, "")}/${skillDirectoryName(skill)}` : "";
-    }
-    function skillClientInstallDir(skill, clientId) {
-      const source = skillSource(skill);
-      const root = cleanDisplayPath(source === "global" ? state.status?.homeDir || "" : source === "agentdock" ? state.status?.dataDir || "" : "");
-      if (!root) return "";
-      const relative = source === "global"
-        ? { "claude-code": ".claude/skills", openclaw: ".openclaw/skills", hermes: ".hermes/skills" }[clientId]
-        : { "claude-code": ".claude/skills", openclaw: "skills", hermes: ".hermes/skills" }[clientId];
-      return relative ? `${root.replace(/[\\/]$/, "")}/${relative}/${skillDirectoryName(skill)}` : "";
-    }
-    function skillInstallBaseDir(skill) {
-      const source = skillSource(skill);
-      if (source === "global") {
-        const home = cleanDisplayPath(state.status?.homeDir || "");
-        return home ? `${home.replace(/[\\/]$/, "")}/.agents/skills` : "";
-      }
-      if (source === "agentdock") return "";
-      const root = skillStorageRootDir();
-      return root ? `${root.replace(/[\\/]$/, "")}/skills` : "";
-    }
-    function skillStorageRootDir() {
-      if (state.settings?.skillStorageLocation === "unified") {
-        const home = cleanDisplayPath(state.status?.homeDir || "");
-        return home || "";
-      }
-      const dataDir = cleanDisplayPath(state.status?.dataDir || "");
-      return dataDir || "";
-    }
-    function clientUsesSharedAgentsDir(skill, clientId) {
-      return clientSupportsAgentsSkills(clientId) && (skillSource(skill) === "agentdock" || skillUsesAgentsPath(skillRecordedPath(skill) || skillInstallDir(skill, [clientId])));
-    }
-    function skillSource(skill) {
-      return String(skill?.source || "").trim();
-    }
-    function skillSourceLabel(skill) {
-      const source = skillSource(skill);
-      if (source === "global") return tr("全局目录", "全局目录");
-      if (source === "agentdock") return tr("AgentDock 目录", "AgentDock 目录");
-      return source || "Skill";
-    }
-    function skillDirectoryName(skill) {
-      const id = String(skill?.id || "").trim();
-      const parts = id.split("::");
-      return parts.length > 1 ? parts.slice(1).join("::") : id;
     }
     function cleanDisplayPath(path) {
       return String(path || "").replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/i, "").replace(/\\/g, "/");
@@ -2249,27 +2367,10 @@
       return skillIsInstalled(skill) && (skill.apps || []).some((app) => normalizeSkillClientId(app) === clientId);
     }
     function filteredSkills() {
-      return state.skills.filter((skill) => {
-        if (!contextMatches(skill.name, skill.description, skill.source, skillClientText(skill), skillSidebarMeta(skill))) return false;
-        if (state.skillFilter === "global") return skillSource(skill) === "global";
-        if (state.skillFilter === "agentdock") return skillSource(skill) === "agentdock";
-        return true;
-      });
+      return state.skills.filter((skill) => contextMatches(skill.name, skill.description, skillClientText(skill), (skill.installations || []).map((item) => item.path).join(" ")));
     }
     function skillIsInstalled(skill) {
       return skill?.installed !== false;
-    }
-    function skillSidebarMeta(skill) {
-      const path = skillRecordedPath(skill) || skillInstallDir(skill, []);
-      const installType = path ? skillPathLabel(skill, path) : skillClientTypeLabel(skill);
-      return [skillSourceLabel(skill), installType].filter(Boolean).join(" · ");
-    }
-    function skillClientTypeLabel(skill) {
-      const apps = (skill.apps || []).map(normalizeSkillClientId).filter(Boolean);
-      const unique = [...new Set(apps)];
-      if (unique.some(clientSupportsAgentsSkills)) return tr(".agents 通用", ".agents 通用");
-      if (unique.length === 1) return `${skillClientShortLabel(unique[0])} only`;
-      return unique.length ? unique.map(skillClientShortLabel).join(", ") : "";
     }
     function skillClientText(skill) {
       return localSkillApps(skill).map(skillClientLabel).join(", ");
@@ -2348,19 +2449,46 @@
       const pager = items.length > perPage ? `<div class="skills-pager"><span>${formatNumber(start + 1)}-${formatNumber(Math.min(start + perPage, items.length))} / ${formatNumber(items.length)}</span><button class="btn" data-action="set-skills-page" data-id="${escapeHtml(key)}" data-page="${page - 1}" ${page <= 1 ? "disabled" : ""}><i data-lucide="chevron-left"></i>${tr("上一页", "上一页")}</button><button class="btn" data-action="set-skills-page" data-id="${escapeHtml(key)}" data-page="${page + 1}" ${page >= pageCount ? "disabled" : ""}>${tr("下一页", "下一页")}<i data-lucide="chevron-right"></i></button></div>` : "";
       return `<section class="skills-board"><div class="skills-board-head"><h3>${escapeHtml(title)}</h3><span>${formatNumber(items.length)}</span></div><div class="skill-result-list">${pageItems.length ? pageItems.map(skillDiscoveryRow).join("") : `<div class="empty">${tr("skills.noDiscovery", "没有找到 Skills")}</div>`}</div>${pager}</section>`;
     }
+    function skillGithubUrl(item) {
+      const githubPath = (value) => {
+        const raw = String(value || "").trim();
+        if (!raw) return "";
+        try {
+          const parsed = new URL(raw);
+          if (parsed.hostname.toLowerCase() !== "github.com") return "";
+          const parts = parsed.pathname.split("/").filter(Boolean);
+          return parts.length >= 2 ? parts.slice(0, 2).join("/") : "";
+        } catch {}
+        const parts = raw.replace(/^github\.com\//i, "").replace(/\.git$/i, "").split("/").filter(Boolean);
+        return parts.length === 2 && parts.every((part) => /^[a-z0-9_.-]+$/i.test(part)) ? parts.join("/") : "";
+      };
+      for (const candidate of [item.url, item.repository, item.package]) {
+        const path = githubPath(candidate);
+        if (path) return `https://github.com/${path}`;
+      }
+      const path = githubPath(`${item.owner || ""}/${item.repository || ""}`);
+      return path ? `https://github.com/${path}` : "";
+    }
     function skillDiscoveryRow(item) {
       const packageId = item.package || item.repository || item.name;
       const owner = item.owner || item.repository || "skills";
       const downloads = item.downloads ? `<span class="badge"><i data-lucide="download"></i>${formatNumber(item.downloads)}</span>` : "";
-      const targets = localSkillsCliClientTargets();
-      const actions = targets.length ? `<button class="btn primary" data-action="choose-skill-install" data-id="${escapeHtml(packageId)}" data-skill-id="${escapeHtml(item.skillId || item.name || "")}"><i data-lucide="plus"></i>${tr("安装", "安装")}</button>` : `<span class="badge warn">${tr("本机无可用客户端", "本机无可用客户端")}</span>`;
-      return `<article class="skill-result-row"><div class="skill-result-copy"><strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong><small>${escapeHtml(item.description || packageId)}</small><div class="skill-result-meta"><span class="badge">${escapeHtml(owner)}</span>${downloads}</div></div><div class="skill-result-actions">${actions}</div></article>`;
+      const githubUrl = skillGithubUrl(item);
+      const openRepositoryLabel = tr("打开 GitHub 仓库", "打开 GitHub 仓库");
+      const name = githubUrl ? `<button type="button" class="skill-repository-link" data-action="open-external" data-url="${escapeHtml(githubUrl)}" title="${escapeHtml(openRepositoryLabel)}" aria-label="${escapeHtml(`${openRepositoryLabel}: ${item.name}`)}"><strong>${escapeHtml(item.name)}</strong><i data-lucide="external-link"></i></button>` : `<strong title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</strong>`;
+      const actions = `<button class="btn primary" data-action="choose-skill-install" data-id="${escapeHtml(packageId)}" data-skill-id="${escapeHtml(item.skillId || item.name || "")}"><i data-lucide="plus"></i>${tr("安装", "安装")}</button>`;
+      return `<article class="skill-result-row"><div class="skill-result-copy">${name}<small>${escapeHtml(item.description || packageId)}</small><div class="skill-result-meta"><span class="badge">${escapeHtml(owner)}</span>${downloads}</div></div><div class="skill-result-actions">${actions}</div></article>`;
     }
     function openSkillInstallDialog(packageId, skillId = "") {
-      const clients = localInstalledClientTargets();
-      if (!clients.some(clientSupportsSkillsCli)) { notify(tr("本机没有 Skills CLI 支持的客户端", "本机没有 Skills CLI 支持的客户端"), "error"); return; }
       state.skillInstallDraft = { packageId, skillId, selected: new Set() };
       renderSkillInstallDialog();
+    }
+    function skillInstallClientTargets() {
+      return localInstalledClientTargets().filter((clientId) => clientId !== "claude-desktop" && !AGENTS_SKILL_CLIENTS.has(clientId) && ["claude-code", "grok", "openclaw", "hermes"].includes(clientId));
+    }
+    function skillInstallTargetLabel(clientId) {
+      const roots = { "claude-code": "~/.claude/skills", codex: "~/.agents/skills", antigravity: "~/.agents/skills", grok: "~/.grok/skills", opencode: "~/.agents/skills", openclaw: "~/.openclaw/skills", hermes: "~/.hermes/skills" };
+      return roots[clientId] || "";
     }
     function renderSkillInstallDialog() {
       const layer = document.getElementById("skill-install-layer");
@@ -2369,14 +2497,16 @@
       if (!draft) return;
       document.getElementById("skill-install-title").textContent = tr("安装 Skill", "安装 Skill");
       document.getElementById("skill-install-package").textContent = draft.packageId;
-      const clients = localInstalledClientTargets();
-      document.getElementById("skill-install-options").innerHTML = clients.map((clientId) => {
-        const supported = clientSupportsSkillsCli(clientId);
-        const shared = supported && clientSupportsAgentsSkills(clientId);
-        const checked = supported && (shared || draft.selected.has(clientId));
-        const description = !supported ? tr("Skills CLI 不支持此客户端", "Skills CLI 不支持此客户端") : shared ? tr("自动安装到 .agents 共享目录", "自动安装到 .agents 共享目录") : tr("可选：使用客户端独立目录", "可选：使用客户端独立目录");
-        return `<label class="skill-install-option ${supported ? "" : "unsupported"}">${clientLogo(clientId)}<input type="checkbox" data-change="skill-install-client" value="${escapeHtml(clientId)}" ${checked ? "checked" : ""} ${shared || !supported ? "disabled" : ""}><span><strong>${escapeHtml(clientMeta(clientId).name)}</strong><small>${description}</small></span></label>`;
-      }).join("");
+      const clients = skillInstallClientTargets();
+      const installedAgentsClients = localInstalledClientTargets().filter((clientId) => AGENTS_SKILL_CLIENTS.has(clientId));
+      const installedAgentsLogos = skillAgentLogos({ apps: installedAgentsClients }, "skill-install-agent-logos");
+      const requiredTarget = `<label class="skill-install-option mandatory"><span class="skill-install-default-icon"><i data-lucide="folder"></i></span><input type="checkbox" checked disabled aria-label="${tr("默认安装位置", "默认安装位置")}"><span><strong>${tr("默认安装位置", "默认安装位置")}</strong><small>~/.agents/skills</small>${installedAgentsLogos}</span></label>`;
+      const optionalTargets = clients.length ? clients.map((clientId) => {
+        const checked = draft.selected.has(clientId);
+        const description = skillInstallTargetLabel(clientId);
+        return `<label class="skill-install-option">${clientLogo(clientId)}<input type="checkbox" data-change="skill-install-client" value="${escapeHtml(clientId)}" ${checked ? "checked" : ""}><span><strong>${escapeHtml(clientMeta(clientId).name)}</strong><small>${escapeHtml(description)}</small></span></label>`;
+      }).join("") : `<p class="skill-install-empty">${tr("没有其他可选客户端", "没有其他可选客户端")}</p>`;
+      document.getElementById("skill-install-options").innerHTML = `${requiredTarget}<p class="skill-install-section-label">${tr("同时启用到其他客户端", "同时启用到其他客户端")}</p>${optionalTargets}`;
       refreshIcons();
     }
     function closeSkillInstallDialog() {
@@ -2385,8 +2515,9 @@
     }
     function selectedSkillInstallClients() {
       const draft = state.skillInstallDraft;
-      if (!draft) return [];
-      return localInstalledClientTargets().filter((clientId) => clientSupportsSkillsCli(clientId) && (clientSupportsAgentsSkills(clientId) || draft.selected.has(clientId)));
+      if (!draft) return ["codex"];
+      const optionalClients = skillInstallClientTargets().filter((clientId) => draft.selected.has(clientId));
+      return ["codex", ...optionalClients];
     }
     async function confirmSkillInstall() {
       const draft = state.skillInstallDraft;
@@ -2554,18 +2685,20 @@
         return `<div class="settings-client-row">${clientLogo(id)}<span class="settings-row-copy"><strong>${escapeHtml(meta.name)}</strong><small>${checked ? tr("client.visible", "显示在客户端列表") : tr("client.hidden", "已从客户端列表隐藏")}</small></span><label class="switch"><input type="checkbox" data-change="setting-client-visibility" data-id="${id}" ${checked ? "checked" : ""} ${onlyVisible ? "disabled" : ""} aria-label="${escapeHtml(meta.name)}" /><span></span></label><span class="settings-client-actions"><button class="icon-btn" type="button" data-action="move-setting-client" data-id="${id}" data-direction="up" title="${moveUp}" aria-label="${moveUp} ${escapeHtml(meta.name)}" ${index === 0 ? "disabled" : ""}><i data-lucide="arrow-up"></i></button><button class="icon-btn" type="button" data-action="move-setting-client" data-id="${id}" data-direction="down" title="${moveDown}" aria-label="${moveDown} ${escapeHtml(meta.name)}" ${index === order.length - 1 ? "disabled" : ""}><i data-lucide="arrow-down"></i></button></span></div>`;
       }).join("");
 
-      document.getElementById("settings-skills-storage-options").innerHTML = settingsChoiceButton("skillStorageLocation", "agentdock", tr("storage.agentdock", "AgentDock 目录"), "archive") + settingsChoiceButton("skillStorageLocation", "unified", tr("storage.unified", "统一目录"), "folder-sync");
-      document.getElementById("settings-skills-path").textContent = skillStorageRootDir() || tr("client.noProject", "尚未选择项目");
-      document.getElementById("settings-skills-sync-options").innerHTML = settingsChoiceButton("skillSyncMethod", "symlink", tr("sync.symlink", "符号链接"), "link-2") + settingsChoiceButton("skillSyncMethod", "copy", tr("sync.copy", "复制文件"), "copy");
-      document.getElementById("settings-sync-hint").textContent = state.settings.skillSyncMethod === "symlink" ? tr("sync.symlinkHint", "修改存储目录中的 Skill 后，客户端会立即读取最新内容。Windows 需要允许创建符号链接。") : tr("sync.copyHint", "安装时会传递 --copy 给 skills CLI。");
       document.getElementById("settings-skills-api-proxy-hint").textContent = state.settings.skillApiProxyEnabled === false ? tr("Skills API 当前强制直连", "Skills API 当前强制直连") : tr("Skills API 当前使用系统代理", "Skills API 当前使用系统代理");
       renderCcSwitchImportStatus();
     }
 
     function showView(name) {
+      const enteringSkills = name === "skills" && state.activeView !== "skills";
       closeProviderEditor();
       closeMcpForm();
       closeMcpTools();
+      if (enteringSkills) {
+        state.skillsWorkspaceView = "discovery";
+        state.inspectingSkillId = "";
+        state.uninstalledSkill = null;
+      }
       state.activeView = name; state.contextQuery = ""; document.getElementById("command-search").value = "";
       document.querySelectorAll("[data-view-button]").forEach((button) => button.classList.toggle("active", button.dataset.viewButton === name));
       document.querySelectorAll("[data-view]").forEach((view) => view.classList.toggle("active", view.dataset.view === name));
@@ -3041,12 +3174,11 @@
       if (action === "select-client") return selectClient(id);
       if (action === "select-software-client") { state.activeClient = id; showView("clients"); renderClients(); refreshIcons(); return; }
       if (action === "set-software-filter") { state.softwareFilter = id; renderSoftware(); renderSourceSidebar(); refreshIcons(); return; }
-      if (action === "set-skill-filter") { state.skillFilter = id; closeSkillDetail(); renderSkills(); renderSourceSidebar(); refreshIcons(); return; }
       if (action === "set-diagnostic-filter") { state.diagnosticFilter = id; renderLogs(); renderSourceSidebar(); refreshIcons(); return; }
       if (action === "focus-diagnostic-status") return focusDiagnosticStatus(String(id));
       if (action === "focus-software") { state.softwareFilter = "all"; renderSoftware(); renderSourceSidebar(); refreshIcons(); document.querySelector(`[data-software-id="${CSS.escape(id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }); return; }
-      if (action === "focus-skill" || action === "inspect-skill") { state.inspectingSkillId = id; state.skillDetailOpen = true; renderSkillDetailModal(); refreshIcons(); return; }
-      if (action === "close-skill-detail") return closeSkillDetail();
+      if (action === "show-skill-discovery") { state.skillsWorkspaceView = "discovery"; state.inspectingSkillId = ""; state.uninstalledSkill = null; renderSkills(); renderSourceSidebar(); refreshIcons(); return; }
+      if (action === "focus-skill" || action === "inspect-skill") { state.skillsWorkspaceView = "detail"; state.inspectingSkillId = id; state.uninstalledSkill = null; renderSkills(); renderSourceSidebar(); refreshIcons(); loadSkillDetailData(id); return; }
       if (action === "choose-skill-install") return openSkillInstallDialog(id, button.dataset.skillId || "");
       if (action === "close-skill-install") return closeSkillInstallDialog();
       if (action === "confirm-install-skill") return withBusy(button, confirmSkillInstall);
@@ -3076,11 +3208,42 @@
       if (action === "install-skill") return withBusy(button, async () => { const current = state.skills.find((item) => item.id === id); const skill = await call("install_skill", { input: { id: current?.name || id, apps: current?.apps?.length ? current.apps : ["codex"] } }); await refreshInstalledSkills(); notify(trf("action.installed", "{name} 已安装", { name: skill.name })); });
       if (action === "install-discovered-skill") return openSkillInstallDialog(id, button.dataset.skillId || "");
       if (action === "quick-install-skill") return withBusy(button, async () => { const clientId = button.dataset.client || state.activeClient; const skill = await call("install_skill", { input: { id, apps: [clientId] } }); state.inspectingSkillId = skill.id; await refreshInstalledSkills(); notify(trf("action.installed", "{name} 已安装", { name: `${skill.name} → ${clientMeta(clientId).name}` })); });
-      if (action === "quick-uninstall-skill") return withBusy(button, async () => { const clientId = button.dataset.client || state.activeClient; const skill = await call("toggle_skill_app", { skillId: id, app: clientId, enabled: false }); if (!skill.installed) { state.inspectingSkillId = ""; state.skillDetailOpen = false; } await refreshInstalledSkills(); notify(trf("action.uninstalled", "{name} 已卸载", { name: `${skill.name} → ${clientMeta(clientId).name}` })); });
-      if (action === "quick-install-skill-group") return withBusy(button, async () => { const clients = skillGroupClients(button); const skill = await call("enable_skill_apps", { skillId: id, apps: clients }); state.inspectingSkillId = skill.id; await refreshInstalledSkills(); notify(trf("action.installed", "{name} 已安装", { name: `${skill.name} → ${tr("Project .agents/skills", "Project .agents/skills")}` })); });
-      if (action === "quick-uninstall-skill-group") return withBusy(button, async () => { const skill = await call("remove_shared_skill", { skillId: id }); if (!skill.installed) { state.inspectingSkillId = ""; state.skillDetailOpen = false; } else { state.inspectingSkillId = skill.id; } await refreshInstalledSkills(); notify(trf("action.uninstalled", "{name} 已卸载", { name: `${skill.name} → ${tr(".agents 通用", ".agents 通用")}` })); });
-      if (action === "uninstall-skill") { if (!await confirmAction(tr("confirm.uninstallSkill", "卸载 Skill"), trf("confirm.uninstallSkillMessage", "确定卸载“{name}”？", { name: id }), tr("confirm.uninstall", "确认卸载"))) return; return withBusy(button, async () => { const skill = await call("uninstall_skill", { skillId: id }); if (state.inspectingSkillId === id) { state.inspectingSkillId = ""; state.skillDetailOpen = false; } await refreshInstalledSkills(); notify(trf("action.uninstalled", "{name} 已卸载", { name: skill.name })); }); }
-      if (action === "refresh-skills") return withBusy(button, async () => { await refreshInstalledSkills(); addLog("ok", tr("Skills 安装状态已重新检测", "Skills 安装状态已重新检测")); notify(tr("Skills 安装状态已重新检测", "Skills 安装状态已重新检测")); });
+      if (action === "retry-skill-targets") return loadSkillTargetGroups(id, { force: true });
+      if (action === "retry-skill-files") return loadSkillFiles(id, state.skillFileViews[id]?.installationId || "", { force: true });
+      if (action === "select-skill-file") { const view = state.skillFileViews[id]; if (!view) return; return loadSkillFileContent(id, view.installationId, button.dataset.path || ""); }
+      if (action === "enable-skill-target") return withBusy(button, async () => {
+        const clients = skillGroupClients(button);
+        const result = await call("enable_skill_apps", { skillId: id, apps: clients });
+        state.inspectingSkillId = result.skill.id;
+        delete state.skillTargetGroups[id]; delete state.skillFileViews[id];
+        await refreshInstalledSkills();
+        loadSkillDetailData(result.skill.id, { force: true });
+        const method = result.method === "copy" ? tr("本地复制", "本地复制") : "Skills CLI";
+        addLog("ok", trf("Skill 已通过 {method} 启用", "Skill 已通过 {method} 启用", { method }));
+        notify(trf("action.installed", "{name} 已安装", { name: result.skill.name }));
+      });
+      if (action === "quick-uninstall-skill") {
+        const current = state.skills.find((item) => item.id === id); const clientId = button.dataset.client || state.activeClient;
+        if (!current || !await confirmSkillUninstall(current, { apps: [clientId] })) return;
+        return withBusy(button, async () => { const result = await call("toggle_skill_app", { skillId: id, app: clientId, enabled: false }); await refreshAfterSkillUninstall(current, result); notify(trf("action.uninstalled", "{name} 已卸载", { name: `${current.name} → ${clientMeta(clientId).name}` })); });
+      }
+      if (action === "quick-install-skill-group") return withBusy(button, async () => { const clients = skillGroupClients(button); const result = await call("enable_skill_apps", { skillId: id, apps: clients }); state.inspectingSkillId = result.skill.id; await refreshInstalledSkills(); notify(trf("action.installed", "{name} 已安装", { name: result.skill.name })); });
+      if (action === "quick-uninstall-skill-group") {
+        const current = state.skills.find((item) => item.id === id); const installation = current?.installations?.find((item) => cleanDisplayPath(item.path).toLowerCase().includes("/.agents/skills/"));
+        if (!current || !installation || !await confirmSkillUninstall(current, { installationId: installation.id })) return;
+        return withBusy(button, async () => { const result = await call("uninstall_skill_installation", { skillId: id, installationId: installation.id }); await refreshAfterSkillUninstall(current, result); notify(trf("action.uninstalled", "{name} 已卸载", { name: `${current.name} → .agents/skills` })); });
+      }
+      if (action === "uninstall-skill-installation") {
+        const current = state.skills.find((item) => item.id === id); const installationId = button.dataset.installation;
+        if (!current || !installationId || !await confirmSkillUninstall(current, { installationId })) return;
+        return withBusy(button, async () => { const result = await call("uninstall_skill_installation", { skillId: id, installationId }); await refreshAfterSkillUninstall(current, result); notify(trf("action.uninstalled", "{name} 已卸载", { name: current.name })); });
+      }
+      if (action === "uninstall-skill") {
+        const current = state.skills.find((item) => item.id === id);
+        if (!current || !await confirmSkillUninstall(current)) return;
+        return withBusy(button, async () => { const result = await call("uninstall_skill", { skillId: id }); await refreshAfterSkillUninstall(current, result); notify(trf("action.uninstalled", "{name} 已卸载", { name: current.name })); });
+      }
+      if (action === "refresh-skills") return withBusy(button, async () => { state.skillsWorkspaceView = "discovery"; state.inspectingSkillId = ""; state.uninstalledSkill = null; await refreshInstalledSkills(); addLog("ok", tr("Skills 安装状态已重新检测", "Skills 安装状态已重新检测")); notify(tr("Skills 安装状态已重新检测", "Skills 安装状态已重新检测")); });
       if (action === "sync-skills") return withBusy(button, async () => { const result = await call("sync_skills"); addLog("ok", result.message); notify(tr("action.skillsSynced", "Skills 已同步")); });
       if (action === "set-skills-view") { state.skillsDiscoveryView = id; state.skillsDiscoveryQuery = ""; state.skillsDiscoveryPages[id] = state.skillsDiscoveryPages[id] || 1; const input = document.getElementById("skill-search-input"); if (input) input.value = ""; renderSkillDiscovery(); refreshIcons(); return; }
       if (action === "set-skills-page") { state.skillsDiscoveryPages[id] = Number(button.dataset.page) || 1; renderSkillDiscovery(); refreshIcons(); return; }
@@ -3128,10 +3291,10 @@
         return queueSettingsSave({ visibleClients: state.settings.clientOrder.filter((id) => visible.has(id)) });
       }
       if (input.dataset.change === "skill-install-client" && state.skillInstallDraft) {
-        if (clientSupportsAgentsSkills(input.value)) return;
         input.checked ? state.skillInstallDraft.selected.add(input.value) : state.skillInstallDraft.selected.delete(input.value);
         return;
       }
+      if (input.dataset.change === "skill-file-installation") return loadSkillFiles(input.dataset.id, input.value, { force: true });
       const key = `${input.dataset.change}:${input.dataset.id || "item"}:${input.dataset.app || "global"}`;
       withBusy(null, async () => { if (input.dataset.change === "mcp-enabled") await call("toggle_mcp_server", { serverId: input.dataset.id, enabled: input.checked }); if (input.dataset.change === "mcp-app") await call("toggle_mcp_app", { serverId: input.dataset.id, app: input.dataset.app, enabled: input.checked }); await loadAll({ quiet: true }); }, key);
     });
@@ -3190,7 +3353,6 @@
       if (event.key !== "Escape") return;
       if (state.providerModelMenuOpen) { state.providerModelMenuOpen = false; renderProviderModelMenu(); return; }
       if (state.workspaceMenuOpen) { state.workspaceMenuOpen = false; renderClientStage(); refreshIcons(); return; }
-      if (!document.getElementById("skill-detail-layer").hidden) { closeSkillDetail(); return; }
       const search = document.getElementById("command-search"); if (document.activeElement === search && search.value) { search.value = ""; search.dispatchEvent(new Event("input", { bubbles: true })); return; }
       if (!document.getElementById("mcp-wizard-layer").hidden) { closeMcpWizard(); return; }
       if (!document.getElementById("mcp-tools-view").hidden) { closeMcpTools(); return; }

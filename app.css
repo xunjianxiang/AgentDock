@@ -92,6 +92,8 @@ body { background: var(--canvas); }
 .source-head .icon-btn { width: 31px; min-height: 31px; border-color: transparent; background: transparent; box-shadow: none; }
 .source-head .icon-btn:hover { border-color: var(--line); background: var(--surface); }
 .source-list { min-height: 0; overflow: auto; padding: 8px; }
+.skills-source-primary { position: sticky; z-index: 2; top: -8px; margin: -8px -8px 6px; padding: 8px; border-bottom: 1px solid var(--line); background: #f1f5f5; }
+.skills-source-primary .source-filter { min-height: 48px; grid-template-columns: 30px minmax(0, 1fr) auto; gap: 9px; }
 .source-group-label { display: flex; min-height: 28px; align-items: center; justify-content: space-between; padding: 0 8px; color: var(--ink-faint); font-size: 9px; font-weight: 680; text-transform: uppercase; }
 .source-group-label b { color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 .source-item, .source-filter {

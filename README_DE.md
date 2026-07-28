@@ -66,7 +66,7 @@ Endnutzer müssen Node.js, npm oder Python nicht separat installieren und keine 
 - Unter macOS im Hintergrund nach GitHub-Releases suchen und über den Verbindungsstatus aktualisieren und neu starten.
 - Das bevorzugte Terminal zum Starten von Kommandozeilen-Clients festlegen.
 - Sichtbare Clients und ihre Reihenfolge in der Client-Liste konfigurieren.
-- Skills im AgentDock-Datenverzeichnis oder unter `~/.agents/skills` speichern und per Dateikopie oder symbolischem Link synchronisieren.
+- Skills global unter `~/.agents/skills` installieren und verwalten und für unterstützte Clients aktivieren.
 
 ### Nutzung und Diagnose
 
