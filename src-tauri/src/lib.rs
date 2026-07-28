@@ -13816,7 +13816,7 @@ mod tests {
 
         assert_eq!(
             skill_path_identity(&preferred_skill_copy_source(&skill).unwrap()),
-            skill_path_identity(&real)
+            skill_path_identity(&fs::canonicalize(&real).unwrap())
         );
         fs::remove_dir_all(root).unwrap();
     }
