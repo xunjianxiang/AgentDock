@@ -66,7 +66,7 @@ No separate Node.js, npm, Python, or manual configuration is required for end us
 - On macOS, check GitHub Releases in the background, then update and restart from the connection status area.
 - Select the preferred terminal used to launch command-line clients.
 - Choose which clients appear in the client list and arrange their order.
-- Store Skills in AgentDock's data directory or `~/.agents/skills`, then synchronize with file copies or symbolic links.
+- Install and manage Skills globally in `~/.agents/skills`, then enable them for supported clients.
 
 ### Usage and Diagnostics
 

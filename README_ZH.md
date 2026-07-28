@@ -66,7 +66,7 @@ AgentDock 把新手流程放在首位：
 - 在 macOS 上后台检查 GitHub Release，并可从连接状态区升级后自动重启。
 - 选择启动命令行客户端时使用的首选终端。
 - 控制客户端列表中显示的客户端及其排列顺序。
-- Skills 可存储在 AgentDock 数据目录或 `~/.agents/skills`，并使用复制文件或符号链接同步。
+- Skills 统一安装和管理在全局 `~/.agents/skills` 目录，并可为受支持的客户端启用。
 
 ### 统计与诊断
 

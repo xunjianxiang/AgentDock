@@ -43,6 +43,7 @@ const MANAGED_PATH_BLOCK_START: &str = "# >>> AgentDock CLI >>>";
 const MANAGED_PATH_BLOCK_END: &str = "# <<< AgentDock CLI <<<";
 const SKILLS_CLI_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 const SKILLS_CLI_TIMEOUT_MESSAGE: &str = "Skills CLI 执行超时（3 分钟），请检查网络或 npm 状态";
+const SKILL_FILE_PREVIEW_LIMIT: u64 = 1_048_576;
 use time::{format_description::well_known::Rfc3339, Duration, OffsetDateTime};
 
 #[derive(Debug, Serialize)]
@@ -128,7 +129,7 @@ impl Default for AppSettings {
             client_order: clients,
             current_working_directory: String::new(),
             recent_working_directories: Vec::new(),
-            skill_storage_location: "agentdock".to_string(),
+            skill_storage_location: "global".to_string(),
             skill_sync_method: "copy".to_string(),
             skill_api_proxy_enabled: true,
         }
@@ -414,6 +415,16 @@ pub struct SyncResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SkillInstallation {
+    id: String,
+    path: String,
+    apps: Vec<String>,
+    is_link: bool,
+    link_target: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SkillRecord {
     id: String,
     name: String,
@@ -422,6 +433,53 @@ pub struct SkillRecord {
     installed: bool,
     apps: Vec<String>,
     updated_at: String,
+    #[serde(default)]
+    installations: Vec<SkillInstallation>,
+    #[serde(default)]
+    source_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillUninstallImpact {
+    skill_id: String,
+    installation_id: Option<String>,
+    installation_count: usize,
+    paths: Vec<String>,
+    apps: Vec<String>,
+    dependent_paths: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillTargetGroup {
+    path: String,
+    apps: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillEnableResult {
+    skill: SkillRecord,
+    method: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillFileEntry {
+    path: String,
+    size: u64,
+    previewable: bool,
+    reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillFileContent {
+    path: String,
+    content: Option<String>,
+    previewable: bool,
+    reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -5298,7 +5356,623 @@ async fn list_skills() -> Result<Vec<SkillRecord>, String> {
 fn list_skills_inner() -> Result<Vec<SkillRecord>, String> {
     let dirs = agentdock_dirs()?;
     ensure_dirs(&dirs)?;
-    list_skill_records_from_sources(&dirs)
+    let home = dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?;
+    scan_global_skill_inventory(&home)
+}
+
+#[derive(Debug, Clone)]
+struct GlobalSkillRoot {
+    path: PathBuf,
+    apps: Vec<String>,
+}
+
+fn global_skill_roots(home: &Path) -> Vec<GlobalSkillRoot> {
+    let mut roots = BTreeMap::<PathBuf, Vec<String>>::new();
+    for app in managed_skill_apps() {
+        if let Some(path) = canonical_skill_root_for_app(home, &app) {
+            roots.entry(path).or_default().push(app);
+        }
+    }
+    for (relative, app) in [
+        (".codex/skills", "codex"),
+        (".gemini/antigravity/skills", "antigravity"),
+        (".gemini/antigravity-cli/skills", "antigravity"),
+        (".config/opencode/skills", "opencode"),
+        (".clawdbot/skills", "openclaw"),
+        (".moltbot/skills", "openclaw"),
+    ] {
+        roots
+            .entry(home.join(relative))
+            .or_default()
+            .push(app.to_string());
+    }
+    roots
+        .into_iter()
+        .map(|(path, apps)| GlobalSkillRoot { path, apps })
+        .collect()
+}
+
+fn managed_skill_apps() -> Vec<String> {
+    [
+        "claude-code",
+        "codex",
+        "antigravity",
+        "grok",
+        "opencode",
+        "openclaw",
+        "hermes",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect()
+}
+
+fn canonical_skill_root_for_app(home: &Path, app: &str) -> Option<PathBuf> {
+    match app {
+        "claude-code" => Some(home.join(".claude/skills")),
+        "codex" | "antigravity" | "opencode" => Some(home.join(".agents/skills")),
+        "grok" => Some(home.join(".grok/skills")),
+        "openclaw" => Some(home.join(".openclaw/skills")),
+        "hermes" => Some(home.join(".hermes/skills")),
+        _ => None,
+    }
+}
+
+fn skill_target_groups_at_home(
+    home: &Path,
+    skill_name: &str,
+    apps: &[String],
+) -> Result<Vec<SkillTargetGroup>, String> {
+    let skill_slug = slugify(skill_name);
+    if skill_slug.is_empty() {
+        return Err("Skill 名称无法生成安全目录".to_string());
+    }
+    let mut grouped = BTreeMap::<PathBuf, Vec<String>>::new();
+    for app in apps {
+        let Some(normalized) = normalize_app_id(app) else {
+            continue;
+        };
+        let Some(root) = canonical_skill_root_for_app(home, &normalized) else {
+            continue;
+        };
+        let group_apps = grouped.entry(root.join(&skill_slug)).or_default();
+        if !group_apps.contains(&normalized) {
+            group_apps.push(normalized);
+        }
+    }
+    Ok(grouped
+        .into_iter()
+        .map(|(path, apps)| SkillTargetGroup {
+            path: path.display().to_string(),
+            apps,
+        })
+        .collect())
+}
+
+fn skill_path_identity(path: &Path) -> String {
+    let normalized = display_path(path).replace('\\', "/");
+    if cfg!(windows) {
+        normalized.to_lowercase()
+    } else {
+        normalized
+    }
+}
+
+fn find_scanned_skill(home: &Path, skill_id: &str) -> Result<SkillRecord, String> {
+    scan_global_skill_inventory(home)?
+        .into_iter()
+        .find(|skill| skill.id == skill_id)
+        .ok_or_else(|| "Skill 安装状态已变化，请刷新后重试".to_string())
+}
+
+fn preferred_skill_copy_source(skill: &SkillRecord) -> Result<PathBuf, String> {
+    let mut installations = skill.installations.iter().collect::<Vec<_>>();
+    installations.sort_by_key(|installation| {
+        (
+            installation.is_link,
+            skill_path_identity(Path::new(&installation.path)),
+        )
+    });
+    for installation in installations {
+        let path = PathBuf::from(&installation.path);
+        let Ok(canonical) = fs::canonicalize(&path) else {
+            continue;
+        };
+        if canonical.is_dir() && canonical.join("SKILL.md").is_file() {
+            return Ok(canonical);
+        }
+    }
+    Err("没有可用于复制的本地 Skill 安装".to_string())
+}
+
+fn copy_skill_entry(
+    source_root: &Path,
+    source: &Path,
+    target: &Path,
+    active_dirs: &mut HashSet<PathBuf>,
+) -> Result<(), String> {
+    let canonical = fs::canonicalize(source)
+        .map_err(|err| format!("读取 Skill 文件失败 {}: {}", source.display(), err))?;
+    if !canonical.starts_with(source_root) {
+        return Err(format!(
+            "Skill 包含指向目录外部的链接: {}",
+            source.display()
+        ));
+    }
+    let metadata =
+        fs::metadata(&canonical).map_err(|err| format!("读取 Skill 文件类型失败: {}", err))?;
+    if metadata.is_dir() {
+        if !active_dirs.insert(canonical.clone()) {
+            return Err(format!("Skill 目录包含循环链接: {}", source.display()));
+        }
+        fs::create_dir_all(target).map_err(|err| format!("创建 Skill 目录失败: {}", err))?;
+        for entry in fs::read_dir(&canonical)
+            .map_err(|err| format!("读取 Skill 目录失败 {}: {}", canonical.display(), err))?
+        {
+            let entry = entry.map_err(|err| format!("读取 Skill 目录项失败: {}", err))?;
+            copy_skill_entry(
+                source_root,
+                &entry.path(),
+                &target.join(entry.file_name()),
+                active_dirs,
+            )?;
+        }
+        active_dirs.remove(&canonical);
+        return Ok(());
+    }
+    if metadata.is_file() {
+        fs::copy(&canonical, target).map_err(|err| {
+            format!(
+                "复制 Skill 文件失败 {} -> {}: {}",
+                canonical.display(),
+                target.display(),
+                err
+            )
+        })?;
+    }
+    Ok(())
+}
+
+fn copy_skill_directory(source: &Path, target: &Path) -> Result<(), String> {
+    if target.exists() {
+        return Err(format!("目标 Skill 已存在: {}", target.display()));
+    }
+    let source_root = fs::canonicalize(source)
+        .map_err(|err| format!("读取本地 Skill 失败 {}: {}", source.display(), err))?;
+    if !source_root.is_dir() || !source_root.join("SKILL.md").is_file() {
+        return Err("本地 Skill 缺少 SKILL.md".to_string());
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|err| format!("创建 Skill 根目录失败: {}", err))?;
+    }
+    let result = copy_skill_entry(&source_root, &source_root, target, &mut HashSet::new());
+    if result.is_err() && target.exists() {
+        let _ = fs::remove_dir_all(target);
+    }
+    result
+}
+
+fn enable_local_skill_target_at_home<F>(
+    home: &Path,
+    skill_id: &str,
+    apps: &[String],
+    run_cli: F,
+) -> Result<SkillEnableResult, String>
+where
+    F: FnOnce() -> Result<(), String>,
+{
+    let skill = find_scanned_skill(home, skill_id)?;
+    let targets = skill_target_groups_at_home(home, &skill.name, apps)?;
+    if targets.is_empty() {
+        return Err("所选客户端没有可用的 Skill 安装目录".to_string());
+    }
+    if targets.len() != 1 {
+        return Err("一次只能启用到一个安装目录".to_string());
+    }
+    let target_paths = targets
+        .iter()
+        .map(|target| PathBuf::from(&target.path))
+        .collect::<Vec<_>>();
+    if let Some(existing) = target_paths.iter().find(|path| path.exists()) {
+        return Err(format!("目标 Skill 已存在: {}", existing.display()));
+    }
+
+    let cli_error = run_cli().err();
+    if cli_error.is_none()
+        && target_paths
+            .iter()
+            .all(|path| path.join("SKILL.md").is_file())
+    {
+        return Ok(SkillEnableResult {
+            skill: find_scanned_skill(home, skill_id)?,
+            method: "cli".to_string(),
+        });
+    }
+
+    let source = preferred_skill_copy_source(&skill)?;
+    for target in &target_paths {
+        if let Err(copy_error) = copy_skill_directory(&source, target) {
+            return Err(match &cli_error {
+                Some(cli_error) => format!(
+                    "Skills CLI 启用失败: {}；本地复制也失败: {}",
+                    cli_error, copy_error
+                ),
+                None => copy_error,
+            });
+        }
+    }
+    Ok(SkillEnableResult {
+        skill: find_scanned_skill(home, skill_id)?,
+        method: "copy".to_string(),
+    })
+}
+
+fn skill_file_preview_state(path: &Path, size: u64) -> (bool, Option<String>) {
+    if size > SKILL_FILE_PREVIEW_LIMIT {
+        return (false, Some("文件超过 1 MiB，无法预览".to_string()));
+    }
+    match fs::read(path) {
+        Ok(bytes) if bytes.contains(&0) => (false, Some("二进制文件无法预览".to_string())),
+        Ok(bytes) if std::str::from_utf8(&bytes).is_err() => {
+            (false, Some("非 UTF-8 文本无法预览".to_string()))
+        }
+        Ok(_) => (true, None),
+        Err(err) => (false, Some(format!("读取文件失败: {}", err))),
+    }
+}
+
+fn collect_skill_files(
+    root: &Path,
+    current: &Path,
+    relative: &Path,
+    active_dirs: &mut HashSet<PathBuf>,
+    files: &mut Vec<SkillFileEntry>,
+) -> Result<(), String> {
+    let canonical = fs::canonicalize(current)
+        .map_err(|err| format!("读取 Skill 文件失败 {}: {}", current.display(), err))?;
+    if !canonical.starts_with(root) {
+        return Err(format!(
+            "Skill 包含指向目录外部的链接: {}",
+            current.display()
+        ));
+    }
+    let metadata =
+        fs::metadata(&canonical).map_err(|err| format!("读取 Skill 文件类型失败: {}", err))?;
+    if metadata.is_dir() {
+        if !active_dirs.insert(canonical.clone()) {
+            return Err(format!("Skill 目录包含循环链接: {}", current.display()));
+        }
+        for entry in fs::read_dir(&canonical)
+            .map_err(|err| format!("读取 Skill 目录失败 {}: {}", canonical.display(), err))?
+        {
+            let entry = entry.map_err(|err| format!("读取 Skill 目录项失败: {}", err))?;
+            collect_skill_files(
+                root,
+                &entry.path(),
+                &relative.join(entry.file_name()),
+                active_dirs,
+                files,
+            )?;
+        }
+        active_dirs.remove(&canonical);
+    } else if metadata.is_file() {
+        let (previewable, reason) = skill_file_preview_state(&canonical, metadata.len());
+        files.push(SkillFileEntry {
+            path: relative.to_string_lossy().replace('\\', "/"),
+            size: metadata.len(),
+            previewable,
+            reason,
+        });
+    }
+    Ok(())
+}
+
+fn list_skill_files_in_root(root: &Path) -> Result<Vec<SkillFileEntry>, String> {
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|err| format!("读取 Skill 目录失败 {}: {}", root.display(), err))?;
+    if !canonical_root.is_dir() || !canonical_root.join("SKILL.md").is_file() {
+        return Err("安装位置中未找到 SKILL.md".to_string());
+    }
+    let mut files = Vec::new();
+    collect_skill_files(
+        &canonical_root,
+        &canonical_root,
+        Path::new(""),
+        &mut HashSet::new(),
+        &mut files,
+    )?;
+    files.sort_by_key(|entry| {
+        (
+            entry.path.to_lowercase() != "skill.md",
+            entry.path.to_lowercase(),
+        )
+    });
+    Ok(files)
+}
+
+fn safe_skill_relative_path(relative_path: &str) -> Result<PathBuf, String> {
+    let path = Path::new(relative_path);
+    if relative_path.trim().is_empty()
+        || path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err("必须提供 Skill 目录内的安全相对路径".to_string());
+    }
+    Ok(path.to_path_buf())
+}
+
+fn read_skill_file_in_root(root: &Path, relative_path: &str) -> Result<SkillFileContent, String> {
+    let relative = safe_skill_relative_path(relative_path)?;
+    let canonical_root = fs::canonicalize(root)
+        .map_err(|err| format!("读取 Skill 目录失败 {}: {}", root.display(), err))?;
+    let candidate = canonical_root.join(&relative);
+    let canonical = fs::canonicalize(&candidate)
+        .map_err(|err| format!("读取 Skill 文件失败 {}: {}", relative_path, err))?;
+    if !canonical.starts_with(&canonical_root) {
+        return Err("Skill 文件路径超出安装目录".to_string());
+    }
+    let metadata =
+        fs::metadata(&canonical).map_err(|err| format!("读取 Skill 文件类型失败: {}", err))?;
+    if !metadata.is_file() {
+        return Err("所选 Skill 路径不是文件".to_string());
+    }
+    let display_path = relative.to_string_lossy().replace('\\', "/");
+    let (previewable, reason) = skill_file_preview_state(&canonical, metadata.len());
+    if !previewable {
+        return Ok(SkillFileContent {
+            path: display_path,
+            content: None,
+            previewable,
+            reason,
+        });
+    }
+    let content = fs::read_to_string(&canonical)
+        .map_err(|err| format!("读取 Skill 文件失败 {}: {}", relative_path, err))?;
+    Ok(SkillFileContent {
+        path: display_path,
+        content: Some(content),
+        previewable: true,
+        reason: None,
+    })
+}
+
+fn resolve_skill_file_installation(
+    home: &Path,
+    skill_id: &str,
+    installation_id: &str,
+) -> Result<PathBuf, String> {
+    let (_, installation, root) = resolve_skill_installation(home, skill_id, installation_id)?;
+    let path = PathBuf::from(installation.path);
+    validate_skill_installation_path(&path, &root.path)?;
+    Ok(path)
+}
+
+#[tauri::command]
+async fn list_skill_files(
+    skill_id: String,
+    installation_id: String,
+) -> Result<Vec<SkillFileEntry>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?;
+        let root = resolve_skill_file_installation(&home, &skill_id, &installation_id)?;
+        list_skill_files_in_root(&root)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+async fn read_skill_file(
+    skill_id: String,
+    installation_id: String,
+    relative_path: String,
+) -> Result<SkillFileContent, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?;
+        let root = resolve_skill_file_installation(&home, &skill_id, &installation_id)?;
+        read_skill_file_in_root(&root, &relative_path)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+#[tauri::command]
+async fn list_skill_target_groups(skill_id: String) -> Result<Vec<SkillTargetGroup>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?;
+        let skill = find_scanned_skill(&home, &skill_id)?;
+        let installed = skill
+            .installations
+            .iter()
+            .map(|item| skill_path_identity(Path::new(&item.path)))
+            .collect::<HashSet<_>>();
+        let targets =
+            skill_target_groups_at_home(&home, &skill.name, managed_skill_apps().as_slice())?
+                .into_iter()
+                .filter(|group| !installed.contains(&skill_path_identity(Path::new(&group.path))))
+                .collect();
+        Ok(targets)
+    })
+    .await
+    .map_err(|err| err.to_string())?
+}
+
+fn skill_installation_id(path: &Path) -> String {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    let identity = if cfg!(windows) {
+        normalized.to_lowercase()
+    } else {
+        normalized
+    };
+    let digest = format!("{:x}", Sha256::digest(identity.as_bytes()));
+    format!("installation::{}", &digest[..24])
+}
+
+fn scan_global_skill_root(
+    root: &GlobalSkillRoot,
+) -> Result<Vec<(String, String, SkillInstallation)>, String> {
+    if !root.path.is_dir() {
+        return Ok(Vec::new());
+    }
+    let entries = match fs::read_dir(&root.path) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(Vec::new()),
+    };
+    let mut installations = Vec::new();
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(_) => continue,
+        };
+        if !metadata.is_dir() && !metadata.file_type().is_symlink() {
+            continue;
+        }
+        let skill_path = path.join("SKILL.md");
+        if !skill_path.is_file() {
+            continue;
+        }
+        let directory_name = entry.file_name().to_string_lossy().to_string();
+        let (name, _) = read_skill_markdown_summary(&skill_path)
+            .unwrap_or_else(|| (directory_name.clone(), String::new()));
+        let link_target = if metadata.file_type().is_symlink() {
+            fs::read_link(&path).ok().map(|target| {
+                let target = if target.is_absolute() {
+                    target
+                } else {
+                    path.parent().unwrap_or(&root.path).join(target)
+                };
+                target.display().to_string()
+            })
+        } else {
+            None
+        };
+        installations.push((
+            slugify(&name),
+            name,
+            SkillInstallation {
+                id: skill_installation_id(&path),
+                path: path.display().to_string(),
+                apps: root.apps.clone(),
+                is_link: metadata.file_type().is_symlink(),
+                link_target,
+            },
+        ));
+    }
+    Ok(installations)
+}
+
+fn installed_skill_source_url(
+    source_type: &str,
+    source_url: &str,
+    skill_path: &str,
+) -> Option<String> {
+    if !source_type.eq_ignore_ascii_case("github") {
+        return None;
+    }
+    let parsed = reqwest::Url::parse(source_url).ok()?;
+    if parsed.scheme() != "https" || !parsed.host_str()?.eq_ignore_ascii_case("github.com") {
+        return None;
+    }
+    let repository = parsed.path_segments()?.collect::<Vec<_>>();
+    if repository.len() != 2 {
+        return None;
+    }
+    let owner = repository[0];
+    let name = repository[1].strip_suffix(".git").unwrap_or(repository[1]);
+    let valid_repository_segment = |value: &str| {
+        !value.is_empty()
+            && value != "."
+            && value != ".."
+            && value
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric() || "-_.".contains(character))
+    };
+    if !valid_repository_segment(owner) || !valid_repository_segment(name) {
+        return None;
+    }
+
+    if skill_path.contains('\\') || skill_path.starts_with('/') || skill_path.ends_with('/') {
+        return None;
+    }
+    let path = skill_path.split('/').collect::<Vec<_>>();
+    if path.last().copied() != Some("SKILL.md")
+        || path
+            .iter()
+            .any(|segment| segment.is_empty() || *segment == "." || *segment == "..")
+    {
+        return None;
+    }
+
+    let mut result = reqwest::Url::parse("https://github.com/").ok()?;
+    {
+        let mut segments = result.path_segments_mut().ok()?;
+        segments.push(owner).push(name);
+    }
+    Some(result.as_str().trim_end_matches('/').to_string())
+}
+
+fn installed_skill_source_urls(home: &Path) -> BTreeMap<String, String> {
+    let path = home.join(".agents").join(".skill-lock.json");
+    let Ok(raw) = fs::read_to_string(path) else {
+        return BTreeMap::new();
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return BTreeMap::new();
+    };
+    let Some(skills) = value.get("skills").and_then(serde_json::Value::as_object) else {
+        return BTreeMap::new();
+    };
+    skills
+        .iter()
+        .filter_map(|(name, metadata)| {
+            let source_type = metadata.get("sourceType")?.as_str()?;
+            let source_url = metadata.get("sourceUrl")?.as_str()?;
+            let skill_path = metadata.get("skillPath")?.as_str()?;
+            installed_skill_source_url(source_type, source_url, skill_path)
+                .map(|url| (slugify(name), url))
+        })
+        .collect()
+}
+
+fn scan_global_skill_inventory(home: &Path) -> Result<Vec<SkillRecord>, String> {
+    let mut grouped: BTreeMap<String, SkillRecord> = BTreeMap::new();
+    let source_urls = installed_skill_source_urls(home);
+    for root in global_skill_roots(home) {
+        for (skill_slug, name, installation) in scan_global_skill_root(&root)? {
+            let record = grouped
+                .entry(skill_slug.clone())
+                .or_insert_with(|| SkillRecord {
+                    id: sourced_skill_id("global", &skill_slug),
+                    name,
+                    description: installation.path.clone(),
+                    source: "global".to_string(),
+                    installed: true,
+                    apps: Vec::new(),
+                    updated_at: now_rfc3339(),
+                    installations: Vec::new(),
+                    source_url: source_urls.get(&skill_slug).cloned(),
+                });
+            record.apps.extend(installation.apps.iter().cloned());
+            record.installations.push(installation);
+        }
+    }
+    let mut records = grouped.into_values().collect::<Vec<_>>();
+    for record in &mut records {
+        record.apps.sort();
+        record.apps.dedup();
+        record
+            .installations
+            .sort_by_key(|installation| installation.path.replace('\\', "/").to_lowercase());
+    }
+    records.sort_by_key(|record| record.name.to_lowercase());
+    Ok(records)
 }
 
 async fn run_skill_write<T, F>(operation: F) -> Result<T, String>
@@ -5331,14 +6005,8 @@ fn list_legacy_skills_inner(dirs: &AgentDockDirs) -> Result<Vec<SkillRecord>, St
 }
 
 fn list_skill_records_from_sources(dirs: &AgentDockDirs) -> Result<Vec<SkillRecord>, String> {
-    let mut records = Vec::new();
-    records.extend(list_skill_records_for_source(dirs, "global")?);
-    records.extend(list_skill_records_for_source(dirs, "agentdock")?);
-    records.sort_by(|a, b| {
-        source_rank(&a.source)
-            .cmp(&source_rank(&b.source))
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
+    let mut records = list_skill_records_for_source(dirs, "global")?;
+    records.sort_by_key(|skill| skill.name.to_lowercase());
     Ok(records)
 }
 
@@ -5404,6 +6072,8 @@ fn scan_skill_directory(
             installed: true,
             apps,
             updated_at: now.to_string(),
+            installations: Vec::new(),
+            source_url: None,
         });
     }
     Ok(records)
@@ -5447,22 +6117,11 @@ fn skills_cli_remove_target(skill: &SkillRecord) -> String {
         .unwrap_or_else(|| split_sourced_skill_id(&skill.id).1.to_string())
 }
 
-fn skill_source_settings(settings: &AppSettings, source: &str) -> AppSettings {
+fn skill_source_settings(settings: &AppSettings, _source: &str) -> AppSettings {
     let mut scoped = settings.clone();
-    scoped.skill_storage_location = match source {
-        "global" => "global".to_string(),
-        "unified" => "unified".to_string(),
-        _ => "agentdock".to_string(),
-    };
+    scoped.skill_storage_location = "global".to_string();
+    scoped.skill_sync_method = "copy".to_string();
     scoped
-}
-
-fn source_rank(source: &str) -> u8 {
-    match source {
-        "global" => 0,
-        "agentdock" => 1,
-        _ => 2,
-    }
 }
 
 fn parse_skills_cli_list_items(output: &str) -> Result<Vec<SkillsCliListItem>, String> {
@@ -5498,6 +6157,8 @@ fn skills_records_from_cli_items_for_source(
                 installed: true,
                 apps: normalize_app_ids(item.agents),
                 updated_at: now_rfc3339(),
+                installations: Vec::new(),
+                source_url: None,
             })
         })
         .collect()
@@ -5543,6 +6204,8 @@ fn install_skill_inner(input: SkillInstallInput) -> Result<SkillRecord, String> 
         installed: true,
         apps: installed_apps,
         updated_at: now_rfc3339(),
+        installations: Vec::new(),
+        source_url: None,
     })
 }
 
@@ -5580,6 +6243,8 @@ fn install_legacy_skill(
             .apps
             .unwrap_or_else(|| vec!["codex".to_string(), "claude-code".to_string()]),
         updated_at: now,
+        installations: Vec::new(),
+        source_url: None,
     };
 
     skills.retain(|skill| skill.id != id);
@@ -5627,11 +6292,17 @@ fn toggle_skill_app_inner(
 }
 
 #[tauri::command]
-async fn enable_skill_apps(skill_id: String, apps: Vec<String>) -> Result<SkillRecord, String> {
+async fn enable_skill_apps(
+    skill_id: String,
+    apps: Vec<String>,
+) -> Result<SkillEnableResult, String> {
     run_skill_write(move || enable_skill_apps_inner(skill_id, apps)).await
 }
 
-fn enable_skill_apps_inner(skill_id: String, apps: Vec<String>) -> Result<SkillRecord, String> {
+fn enable_skill_apps_inner(
+    skill_id: String,
+    apps: Vec<String>,
+) -> Result<SkillEnableResult, String> {
     let dirs = agentdock_dirs()?;
     ensure_dirs(&dirs)?;
     let settings = read_app_settings(&dirs)?;
@@ -5640,24 +6311,24 @@ fn enable_skill_apps_inner(skill_id: String, apps: Vec<String>) -> Result<SkillR
         for app in apps {
             updated = Some(toggle_skill_app_inner(skill_id.clone(), app, true)?);
         }
-        return updated.ok_or_else(|| "至少选择一个客户端".to_string());
+        return updated
+            .map(|skill| SkillEnableResult {
+                skill,
+                method: "legacy".to_string(),
+            })
+            .ok_or_else(|| "至少选择一个客户端".to_string());
     }
 
-    let (source, raw_skill_id) = split_sourced_skill_id(&skill_id);
+    let home = dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?;
+    let (source, _) = split_sourced_skill_id(&skill_id);
     let scoped_settings = skill_source_settings(&settings, source);
     let cwd = skills_cli_working_directory(&scoped_settings)?
         .ok_or_else(|| "Cannot resolve Skills CLI working directory".to_string())?;
-    let (command, installed_apps) =
-        skills_cli_enable_apps_command(&skill_id, &scoped_settings, &apps)?;
-    run_skills_cli(command, &cwd)?;
-    Ok(SkillRecord {
-        id: sourced_skill_id(source, &slugify(raw_skill_id)),
-        name: raw_skill_id.to_string(),
-        description: cwd.display().to_string(),
-        source: scoped_settings.skill_storage_location,
-        installed: true,
-        apps: installed_apps,
-        updated_at: now_rfc3339(),
+    let cli_attempt = skills_cli_enable_apps_command(&skill_id, &scoped_settings, &apps);
+    enable_local_skill_target_at_home(&home, &skill_id, &apps, move || {
+        let (command, _) = cli_attempt?;
+        run_skills_cli(command, &cwd)?;
+        Ok(())
     })
 }
 
@@ -5688,6 +6359,8 @@ fn toggle_cli_skill_app(
             installed: true,
             apps,
             updated_at: now_rfc3339(),
+            installations: Vec::new(),
+            source_url: None,
         });
     }
 
@@ -5733,6 +6406,8 @@ fn toggle_cli_skill_app(
         installed: !remaining_apps.is_empty(),
         apps: remaining_apps,
         updated_at: now_rfc3339(),
+        installations: existing.installations,
+        source_url: existing.source_url,
     })
 }
 
@@ -5902,76 +6577,286 @@ fn remove_skill_link(path: &Path) -> Result<(), String> {
     fs::remove_file(path).map_err(|err| format!("替换 Skill 目录链接失败: {}", err))
 }
 
+fn resolve_skill_installation(
+    home: &Path,
+    skill_id: &str,
+    installation_id: &str,
+) -> Result<(SkillRecord, SkillInstallation, GlobalSkillRoot), String> {
+    let skill = scan_global_skill_inventory(home)?
+        .into_iter()
+        .find(|skill| skill.id == skill_id)
+        .ok_or_else(|| "Skill 安装状态已变化，请刷新后重试".to_string())?;
+    let installation = skill
+        .installations
+        .iter()
+        .find(|installation| installation.id == installation_id)
+        .cloned()
+        .ok_or_else(|| "未找到安装位置，可能已被其他程序修改".to_string())?;
+    let installation_path = PathBuf::from(&installation.path);
+    let root = global_skill_roots(home)
+        .into_iter()
+        .find(|root| installation_path.parent() == Some(root.path.as_path()))
+        .ok_or_else(|| "安装位置不属于受支持的 Agent Skills 目录".to_string())?;
+    Ok((skill, installation, root))
+}
+
+fn validate_skill_installation_path(path: &Path, root: &Path) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "无效的 Skill 安装路径".to_string())?;
+    let actual_parent =
+        fs::canonicalize(parent).map_err(|err| format!("读取 Skill 目录失败: {}", err))?;
+    let expected_parent =
+        fs::canonicalize(root).map_err(|err| format!("读取 Agent Skills 目录失败: {}", err))?;
+    if actual_parent != expected_parent {
+        return Err("Skill 安装路径不属于预期目录".to_string());
+    }
+    let metadata =
+        fs::symlink_metadata(path).map_err(|_| "安装位置已变化，请刷新后重试".to_string())?;
+    if !metadata.is_dir() && !metadata.file_type().is_symlink() {
+        return Err("Skill 安装位置不是目录".to_string());
+    }
+    if !path.join("SKILL.md").is_file() {
+        return Err("安装位置中未找到 SKILL.md".to_string());
+    }
+    Ok(())
+}
+
+fn remove_skill_installation_path(path: &Path) -> Result<(), String> {
+    let metadata =
+        fs::symlink_metadata(path).map_err(|_| "安装位置已变化，请刷新后重试".to_string())?;
+    if metadata.file_type().is_symlink() {
+        remove_skill_link(path)
+    } else {
+        fs::remove_dir_all(path).map_err(|err| format!("卸载 Skill 失败: {}", err))
+    }
+}
+
+fn normalized_existing_path(path: &Path) -> Option<PathBuf> {
+    fs::canonicalize(path).ok()
+}
+
+fn dependent_skill_link_paths(skill: &SkillRecord, selected_path: &Path) -> Vec<PathBuf> {
+    let Some(selected_target) = normalized_existing_path(selected_path) else {
+        return Vec::new();
+    };
+    skill
+        .installations
+        .iter()
+        .filter(|installation| {
+            installation.is_link && Path::new(&installation.path) != selected_path
+        })
+        .filter_map(|installation| {
+            let path = PathBuf::from(&installation.path);
+            (normalized_existing_path(&path) == Some(selected_target.clone())).then_some(path)
+        })
+        .collect()
+}
+
+fn detach_dependent_skill_links(source: &Path, links: &[PathBuf]) -> Result<(), String> {
+    for link in links {
+        let parent = link
+            .parent()
+            .ok_or_else(|| "无效的 Skill 链接路径".to_string())?;
+        let temp = parent.join(format!(
+            ".agentdock-detach-{}-{}",
+            link.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("skill"),
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ));
+        copy_dir_all(source, &temp)?;
+        if let Err(error) = remove_skill_link(link) {
+            let _ = fs::remove_dir_all(&temp);
+            return Err(error);
+        }
+        if let Err(error) = fs::rename(&temp, link) {
+            let _ = fs::remove_dir_all(&temp);
+            return Err(format!("保留其他 Skill 安装位置失败: {}", error));
+        }
+    }
+    Ok(())
+}
+
+fn remove_global_skill_lock_entry(home: &Path, skill_name: &str) -> Result<(), String> {
+    let path = home.join(".agents").join(".skill-lock.json");
+    if !path.is_file() {
+        return Ok(());
+    }
+    let raw =
+        fs::read_to_string(&path).map_err(|err| format!("读取 Skills 锁文件失败: {}", err))?;
+    let mut value: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|err| format!("解析 Skills 锁文件失败: {}", err))?;
+    let Some(skills) = value
+        .get_mut("skills")
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return Ok(());
+    };
+    let expected = slugify(skill_name);
+    let keys = skills
+        .keys()
+        .filter(|key| slugify(key) == expected)
+        .cloned()
+        .collect::<Vec<_>>();
+    if keys.is_empty() {
+        return Ok(());
+    }
+    for key in keys {
+        skills.remove(&key);
+    }
+    write_json(&path, &value)
+}
+
+fn uninstall_skill_installation_at_home(
+    home: &Path,
+    skill_id: &str,
+    installation_id: &str,
+) -> Result<SkillRecord, String> {
+    let (skill, installation, root) = resolve_skill_installation(home, skill_id, installation_id)?;
+    let path = PathBuf::from(&installation.path);
+    validate_skill_installation_path(&path, &root.path)?;
+    let dependents = if installation.is_link {
+        Vec::new()
+    } else {
+        dependent_skill_link_paths(&skill, &path)
+    };
+    detach_dependent_skill_links(&path, &dependents)?;
+    remove_skill_installation_path(&path)?;
+
+    if let Some(remaining) = scan_global_skill_inventory(home)?
+        .into_iter()
+        .find(|record| record.id == skill.id)
+    {
+        if remaining
+            .installations
+            .iter()
+            .any(|item| item.id == installation_id)
+        {
+            return Err("卸载后仍检测到该安装位置".to_string());
+        }
+        return Ok(remaining);
+    }
+
+    remove_global_skill_lock_entry(home, &skill.name)?;
+    Ok(SkillRecord {
+        installed: false,
+        apps: Vec::new(),
+        installations: Vec::new(),
+        updated_at: now_rfc3339(),
+        ..skill
+    })
+}
+
+fn inspect_skill_uninstall_at_home(
+    home: &Path,
+    skill_id: &str,
+    installation_id: Option<&str>,
+) -> Result<SkillUninstallImpact, String> {
+    let skill = scan_global_skill_inventory(home)?
+        .into_iter()
+        .find(|skill| skill.id == skill_id)
+        .ok_or_else(|| "Skill 安装状态已变化，请刷新后重试".to_string())?;
+    let installations = match installation_id {
+        Some(id) => vec![skill
+            .installations
+            .iter()
+            .find(|installation| installation.id == id)
+            .cloned()
+            .ok_or_else(|| "未找到安装位置，可能已被其他程序修改".to_string())?],
+        None => skill.installations.clone(),
+    };
+    let mut apps = installations
+        .iter()
+        .flat_map(|installation| installation.apps.iter().cloned())
+        .collect::<Vec<_>>();
+    apps.sort();
+    apps.dedup();
+    let dependent_paths = if installations.len() == 1 && !installations[0].is_link {
+        dependent_skill_link_paths(&skill, Path::new(&installations[0].path))
+            .into_iter()
+            .map(|path| path.display().to_string())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Ok(SkillUninstallImpact {
+        skill_id: skill.id,
+        installation_id: installation_id.map(str::to_string),
+        installation_count: installations.len(),
+        paths: installations
+            .iter()
+            .map(|installation| installation.path.clone())
+            .collect(),
+        apps,
+        dependent_paths,
+    })
+}
+
+#[tauri::command]
+async fn inspect_skill_uninstall(
+    skill_id: String,
+    installation_id: Option<String>,
+) -> Result<SkillUninstallImpact, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let home = dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?;
+        inspect_skill_uninstall_at_home(&home, &skill_id, installation_id.as_deref())
+    })
+    .await
+    .map_err(|error| format!("Skills 卸载检查任务失败: {}", error))?
+}
+
+#[tauri::command]
+async fn uninstall_skill_installation(
+    skill_id: String,
+    installation_id: String,
+) -> Result<SkillRecord, String> {
+    run_skill_write(move || {
+        let home = dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?;
+        uninstall_skill_installation_at_home(&home, &skill_id, &installation_id)
+    })
+    .await
+}
+
 #[tauri::command]
 async fn uninstall_skill(skill_id: String) -> Result<SkillRecord, String> {
     run_skill_write(move || uninstall_skill_inner(skill_id)).await
 }
 
 fn uninstall_skill_inner(skill_id: String) -> Result<SkillRecord, String> {
-    let dirs = agentdock_dirs()?;
-    ensure_dirs(&dirs)?;
-    let settings = read_app_settings(&dirs)?;
-    if skills_uses_legacy_storage(&settings) {
-        return uninstall_legacy_skill(&dirs, skill_id);
+    let home = dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?;
+    let skill = scan_global_skill_inventory(&home)?
+        .into_iter()
+        .find(|skill| skill.id == skill_id)
+        .ok_or_else(|| "Skill 安装状态已变化，请刷新后重试".to_string())?;
+    let roots = global_skill_roots(&home);
+    let mut resolved = Vec::new();
+    for installation in &skill.installations {
+        let path = PathBuf::from(&installation.path);
+        let root = roots
+            .iter()
+            .find(|root| path.parent() == Some(root.path.as_path()))
+            .ok_or_else(|| "安装位置不属于受支持的 Agent Skills 目录".to_string())?;
+        validate_skill_installation_path(&path, &root.path)?;
+        resolved.push((installation.is_link, path));
     }
-    let has_source = skill_id.contains("::");
-    let (source_hint, raw_skill_id) = split_sourced_skill_id(&skill_id);
-    let existing = list_skills_inner().ok().and_then(|skills| {
-        skills.into_iter().find(|skill| {
-            let (_, id) = split_sourced_skill_id(&skill.id);
-            if has_source {
-                skill.id == skill_id
-            } else {
-                id == raw_skill_id || skill.name == raw_skill_id
-            }
-        })
-    });
-    let source = existing
-        .as_ref()
-        .map(|skill| skill.source.as_str())
-        .unwrap_or(source_hint);
-    let scoped_settings = skill_source_settings(&settings, source);
-    let cwd = skills_cli_working_directory(&scoped_settings)?
-        .ok_or_else(|| "Cannot resolve Skills CLI working directory".to_string())?;
-    let skill_name = existing
-        .as_ref()
-        .map(|skill| skill.name.clone())
-        .unwrap_or_else(|| raw_skill_id.to_string());
-    let remove_target = existing
-        .as_ref()
-        .map(skills_cli_remove_target)
-        .unwrap_or_else(|| raw_skill_id.to_string());
-    run_skills_cli_allowing_missing_skill(
-        skills_cli_remove_command(&remove_target, &scoped_settings, None),
-        &cwd,
-    )?;
-    if let Some(existing) = existing.as_ref() {
-        let still_installed = list_skill_records_for_source(&dirs, source)?
-            .into_iter()
-            .any(|skill| skill.id == existing.id);
-        if still_installed {
-            return Err(format!(
-                "Skills CLI 未能从 {} 目录移除 {}",
-                if source == "global" {
-                    "全局"
-                } else {
-                    "AgentDock"
-                },
-                existing.name
-            ));
-        }
+    resolved.sort_by_key(|(is_link, _)| !*is_link);
+    for (_, path) in resolved {
+        remove_skill_installation_path(&path)?;
     }
+    if scan_global_skill_inventory(&home)?
+        .iter()
+        .any(|record| record.id == skill.id)
+    {
+        return Err("卸载后仍检测到该 Skill 的安装位置".to_string());
+    }
+    remove_global_skill_lock_entry(&home, &skill.name)?;
     Ok(SkillRecord {
-        id: existing
-            .as_ref()
-            .map(|skill| skill.id.clone())
-            .unwrap_or_else(|| sourced_skill_id(source, &slugify(raw_skill_id))),
-        name: skill_name,
-        description: cwd.display().to_string(),
-        source: scoped_settings.skill_storage_location,
         installed: false,
         apps: Vec::new(),
+        installations: Vec::new(),
         updated_at: now_rfc3339(),
+        ..skill
     })
 }
 
@@ -6093,12 +6978,8 @@ fn sync_skill_file(source: &Path, target: &Path, method: &str) -> Result<(), Str
     Ok(())
 }
 
-fn skills_cli_list_command(settings: &AppSettings) -> SkillsCliCommand {
-    if settings.skill_storage_location == "global" {
-        skills_cli_list_global_command()
-    } else {
-        skills_cli_list_project_command()
-    }
+fn skills_cli_list_command(_settings: &AppSettings) -> SkillsCliCommand {
+    skills_cli_list_global_command()
 }
 
 fn skills_cli_list_project_command() -> SkillsCliCommand {
@@ -6123,7 +7004,7 @@ fn skills_cli_list_global_command() -> SkillsCliCommand {
 fn skills_cli_add_command(
     package: &str,
     skill_id: Option<&str>,
-    settings: &AppSettings,
+    _settings: &AppSettings,
     apps: Option<&[String]>,
 ) -> SkillsCliCommand {
     let mut args = vec![
@@ -6132,12 +7013,8 @@ fn skills_cli_add_command(
         package.trim().to_string(),
         "--yes".to_string(),
     ];
-    if settings.skill_storage_location == "global" {
-        args.push("--global".to_string());
-    }
-    if settings.skill_sync_method == "copy" {
-        args.push("--copy".to_string());
-    }
+    args.push("--global".to_string());
+    args.push("--copy".to_string());
     if let Some(skill_id) = skill_id.filter(|value| !value.trim().is_empty()) {
         args.push("--skill".to_string());
         args.push(skill_id.trim().to_string());
@@ -6175,7 +7052,7 @@ fn skills_cli_enable_apps_command(
 
 fn skills_cli_remove_command(
     skill: &str,
-    settings: &AppSettings,
+    _settings: &AppSettings,
     apps: Option<&[String]>,
 ) -> SkillsCliCommand {
     let mut args = vec![
@@ -6185,9 +7062,7 @@ fn skills_cli_remove_command(
         skill.trim().to_string(),
         "--yes".to_string(),
     ];
-    if settings.skill_storage_location == "global" {
-        args.push("--global".to_string());
-    }
+    args.push("--global".to_string());
     if let Some(apps) = apps.filter(|apps| !apps.is_empty()) {
         let agents = skills_cli_agent_names(apps);
         if agents.is_empty() {
@@ -6233,6 +7108,7 @@ fn skills_cli_agent_name(app: &str) -> Option<&'static str> {
         "claude-code" => Some("claude-code"),
         "codex" => Some("codex"),
         "antigravity" => Some("antigravity"),
+        "grok" => Some("grok"),
         "opencode" => Some("opencode"),
         "openclaw" => Some("openclaw"),
         "hermes" => Some("hermes-agent"),
@@ -9233,11 +10109,16 @@ pub fn run() {
             open_path,
             open_external,
             list_skills,
+            list_skill_target_groups,
+            list_skill_files,
+            read_skill_file,
             install_skill,
             discover_skills,
             toggle_skill_app,
             enable_skill_apps,
             remove_shared_skill,
+            inspect_skill_uninstall,
+            uninstall_skill_installation,
             uninstall_skill,
             sync_skills,
             list_mcp_servers,
@@ -9463,8 +10344,6 @@ fn decode_app_settings(raw: &str) -> Result<(AppSettings, bool), String> {
 fn normalize_app_settings(mut settings: AppSettings) -> AppSettings {
     const LANGUAGES: &[&str] = &["zh-CN", "zh-TW", "en-US", "ja-JP", "de-DE"];
     const THEMES: &[&str] = &["light", "dark", "system"];
-    const STORAGE_LOCATIONS: &[&str] = &["agentdock", "unified"];
-    const SYNC_METHODS: &[&str] = &["copy", "symlink"];
 
     if !LANGUAGES.contains(&settings.language.as_str()) {
         settings.language = "zh-CN".to_string();
@@ -9472,12 +10351,8 @@ fn normalize_app_settings(mut settings: AppSettings) -> AppSettings {
     if !THEMES.contains(&settings.theme.as_str()) {
         settings.theme = "system".to_string();
     }
-    if !STORAGE_LOCATIONS.contains(&settings.skill_storage_location.as_str()) {
-        settings.skill_storage_location = "agentdock".to_string();
-    }
-    if !SYNC_METHODS.contains(&settings.skill_sync_method.as_str()) {
-        settings.skill_sync_method = "copy".to_string();
-    }
+    settings.skill_storage_location = "global".to_string();
+    settings.skill_sync_method = "copy".to_string();
     if !terminal_options().contains(&settings.preferred_terminal.as_str()) {
         settings.preferred_terminal = default_terminal().to_string();
     }
@@ -9619,7 +10494,7 @@ fn default_terminal() -> &'static str {
 fn skills_uses_legacy_storage(settings: &AppSettings) -> bool {
     !matches!(
         settings.skill_storage_location.as_str(),
-        "agentdock" | "unified"
+        "agentdock" | "unified" | "global"
     )
 }
 
@@ -12125,6 +13000,8 @@ fn default_skills() -> Vec<SkillRecord> {
             installed: true,
             apps: vec!["codex".to_string(), "claude-code".to_string()],
             updated_at: now.clone(),
+            installations: Vec::new(),
+            source_url: None,
         },
         SkillRecord {
             id: "browse".to_string(),
@@ -12134,6 +13011,8 @@ fn default_skills() -> Vec<SkillRecord> {
             installed: false,
             apps: vec!["codex".to_string()],
             updated_at: now.clone(),
+            installations: Vec::new(),
+            source_url: None,
         },
         SkillRecord {
             id: "design-review".to_string(),
@@ -12143,6 +13022,8 @@ fn default_skills() -> Vec<SkillRecord> {
             installed: false,
             apps: vec!["codex".to_string()],
             updated_at: now,
+            installations: Vec::new(),
+            source_url: None,
         },
     ]
 }
@@ -12548,7 +13429,7 @@ mod tests {
             Some("codex")
         );
         assert_eq!(settings.visible_clients, vec!["codex"]);
-        assert_eq!(settings.skill_storage_location, "agentdock");
+        assert_eq!(settings.skill_storage_location, "global");
         assert_eq!(settings.skill_sync_method, "copy");
     }
 
@@ -12626,34 +13507,17 @@ mod tests {
     }
 
     #[test]
-    fn skills_storage_location_accepts_original_locations() {
-        let mut settings = AppSettings::default();
-        settings.skill_storage_location = "global".to_string();
-        assert_eq!(
-            normalize_app_settings(settings).skill_storage_location,
-            "agentdock"
-        );
+    fn skills_settings_always_normalize_to_global_copy_mode() {
+        for location in ["global", "project", "agentdock", "unified", "elsewhere"] {
+            let mut settings = AppSettings::default();
+            settings.skill_storage_location = location.to_string();
+            settings.skill_sync_method = "symlink".to_string();
 
-        let mut settings = AppSettings::default();
-        settings.skill_storage_location = "project".to_string();
-        assert_eq!(
-            normalize_app_settings(settings).skill_storage_location,
-            "agentdock"
-        );
+            let normalized = normalize_app_settings(settings);
 
-        let mut settings = AppSettings::default();
-        settings.skill_storage_location = "agentdock".to_string();
-        assert_eq!(
-            normalize_app_settings(settings).skill_storage_location,
-            "agentdock"
-        );
-
-        let mut settings = AppSettings::default();
-        settings.skill_storage_location = "unified".to_string();
-        assert_eq!(
-            normalize_app_settings(settings).skill_storage_location,
-            "unified"
-        );
+            assert_eq!(normalized.skill_storage_location, "global");
+            assert_eq!(normalized.skill_sync_method, "copy");
+        }
     }
 
     #[cfg(windows)]
@@ -12781,6 +13645,8 @@ mod tests {
                 installed: true,
                 apps: vec!["codex".to_string()],
                 updated_at: now_rfc3339(),
+                installations: Vec::new(),
+                source_url: None,
             },
             SkillRecord {
                 id: "available".to_string(),
@@ -12790,6 +13656,8 @@ mod tests {
                 installed: false,
                 apps: vec!["codex".to_string()],
                 updated_at: now_rfc3339(),
+                installations: Vec::new(),
+                source_url: None,
             },
         ];
 
@@ -12825,8 +13693,8 @@ mod tests {
     #[test]
     fn skills_cli_add_command_uses_npx_skills_add() {
         let mut settings = AppSettings::default();
-        settings.skill_storage_location = "global".to_string();
-        settings.skill_sync_method = "copy".to_string();
+        settings.skill_storage_location = "agentdock".to_string();
+        settings.skill_sync_method = "symlink".to_string();
         let apps = vec![
             "codex".to_string(),
             "claude-code".to_string(),
@@ -12855,9 +13723,462 @@ mod tests {
                 "--agent",
                 "codex",
                 "claude-code",
+                "grok",
                 "hermes-agent"
             ]
         );
+    }
+
+    fn skill_inventory_test_root(suffix: &str) -> PathBuf {
+        env::temp_dir().join(format!(
+            "agentdock-skill-inventory-{}-{}-{}",
+            suffix,
+            std::process::id(),
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ))
+    }
+
+    fn write_test_skill(path: &Path, name: &str) {
+        fs::create_dir_all(path).unwrap();
+        fs::write(
+            path.join("SKILL.md"),
+            format!("---\nname: {}\ndescription: fixture\n---\n", name),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn skill_target_groups_merge_clients_with_the_same_path() {
+        let root = skill_inventory_test_root("target-groups");
+        let groups = skill_target_groups_at_home(
+            &root,
+            "review",
+            &[
+                "codex".to_string(),
+                "antigravity".to_string(),
+                "opencode".to_string(),
+                "grok".to_string(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(
+            Path::new(&groups[0].path),
+            root.join(".agents/skills/review")
+        );
+        assert_eq!(groups[0].apps, vec!["codex", "antigravity", "opencode"]);
+        assert_eq!(Path::new(&groups[1].path), root.join(".grok/skills/review"));
+    }
+
+    #[test]
+    fn skill_target_groups_ignore_claude_desktop() {
+        let root = skill_inventory_test_root("ignore-desktop");
+        let groups =
+            skill_target_groups_at_home(&root, "review", &["claude-desktop".to_string()]).unwrap();
+
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn skill_copy_source_prefers_real_installation() {
+        let root = skill_inventory_test_root("copy-source");
+        let linked = root.join("linked-skill");
+        let real = root.join("real-skill");
+        write_test_skill(&linked, "review");
+        write_test_skill(&real, "review");
+        let skill = SkillRecord {
+            id: "global::review".to_string(),
+            name: "review".to_string(),
+            description: String::new(),
+            source: "global".to_string(),
+            installed: true,
+            apps: vec!["codex".to_string()],
+            updated_at: now_rfc3339(),
+            installations: vec![
+                SkillInstallation {
+                    id: "linked".to_string(),
+                    path: linked.display().to_string(),
+                    apps: vec!["codex".to_string()],
+                    is_link: true,
+                    link_target: Some(real.display().to_string()),
+                },
+                SkillInstallation {
+                    id: "real".to_string(),
+                    path: real.display().to_string(),
+                    apps: vec!["codex".to_string()],
+                    is_link: false,
+                    link_target: None,
+                },
+            ],
+            source_url: None,
+        };
+
+        assert_eq!(
+            skill_path_identity(&preferred_skill_copy_source(&skill).unwrap()),
+            skill_path_identity(&real)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_copy_preserves_nested_files() {
+        let root = skill_inventory_test_root("copy-nested");
+        let source = root.join("source");
+        let target = root.join(".grok/skills/review");
+        write_test_skill(&source, "review");
+        fs::create_dir_all(source.join("references")).unwrap();
+        fs::write(source.join("references/guide.md"), "guide").unwrap();
+
+        copy_skill_directory(&source, &target).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(target.join("references/guide.md")).unwrap(),
+            "guide"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_copy_refuses_existing_target() {
+        let root = skill_inventory_test_root("copy-conflict");
+        let source = root.join("source");
+        let target = root.join(".grok/skills/review");
+        write_test_skill(&source, "review");
+        write_test_skill(&target, "existing");
+
+        let error = copy_skill_directory(&source, &target).unwrap_err();
+
+        assert!(error.contains("已存在"));
+        assert!(target.join("SKILL.md").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_enable_falls_back_to_local_copy_when_cli_fails() {
+        let root = skill_inventory_test_root("enable-fallback");
+        let source = root.join(".codex/skills/review");
+        write_test_skill(&source, "review");
+        fs::create_dir_all(source.join("references")).unwrap();
+        fs::write(source.join("references/guide.md"), "copied").unwrap();
+        let skill = scan_global_skill_inventory(&root).unwrap().remove(0);
+
+        let result =
+            enable_local_skill_target_at_home(&root, &skill.id, &["grok".to_string()], || {
+                Err("npx failed".to_string())
+            })
+            .unwrap();
+
+        assert_eq!(result.method, "copy");
+        assert_eq!(
+            fs::read_to_string(root.join(".grok/skills/review/references/guide.md")).unwrap(),
+            "copied"
+        );
+        assert_eq!(result.skill.installations.len(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_files_put_skill_markdown_first() {
+        let root = skill_inventory_test_root("files-order");
+        write_test_skill(&root, "review");
+        fs::create_dir_all(root.join("references")).unwrap();
+        fs::write(root.join("references/z.md"), "z").unwrap();
+        fs::write(root.join("a.txt"), "a").unwrap();
+
+        let files = list_skill_files_in_root(&root).unwrap();
+
+        assert_eq!(
+            files
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["SKILL.md", "a.txt", "references/z.md"]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_file_read_rejects_parent_traversal() {
+        let root = skill_inventory_test_root("files-traversal");
+        write_test_skill(&root, "review");
+
+        let error = read_skill_file_in_root(&root, "../secret.txt").unwrap_err();
+
+        assert!(error.contains("相对路径"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_file_read_marks_binary_and_large_files_unpreviewable() {
+        let root = skill_inventory_test_root("files-limits");
+        write_test_skill(&root, "review");
+        fs::write(root.join("binary.bin"), [0_u8, 1, 2]).unwrap();
+        fs::write(root.join("large.txt"), vec![b'x'; 1_048_577]).unwrap();
+
+        let binary = read_skill_file_in_root(&root, "binary.bin").unwrap();
+        let large = read_skill_file_in_root(&root, "large.txt").unwrap();
+
+        assert!(!binary.previewable);
+        assert!(binary.content.is_none());
+        assert!(binary.reason.unwrap().contains("二进制"));
+        assert!(!large.previewable);
+        assert!(large.content.is_none());
+        assert!(large.reason.unwrap().contains("1 MiB"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn global_skill_inventory_groups_same_named_installations_by_path() {
+        let root = skill_inventory_test_root("duplicates");
+        write_test_skill(&root.join(".agents/skills/demo"), "demo");
+        write_test_skill(&root.join(".codex/skills/demo"), "demo");
+
+        let skills = scan_global_skill_inventory(&root).unwrap();
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "demo");
+        assert_eq!(skills[0].installations.len(), 2);
+        assert_ne!(skills[0].installations[0].id, skills[0].installations[1].id);
+        assert!(skills[0].apps.contains(&"codex".to_string()));
+        assert!(skills[0]
+            .installations
+            .iter()
+            .any(|item| Path::new(&item.path) == root.join(".agents/skills/demo")));
+        assert!(skills[0]
+            .installations
+            .iter()
+            .any(|item| Path::new(&item.path) == root.join(".codex/skills/demo")));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn installed_skill_source_url_builds_github_repository_root() {
+        assert_eq!(
+            installed_skill_source_url(
+                "github",
+                "https://github.com/vercel-labs/agent-skills.git",
+                "skills/react-native-skills/SKILL.md",
+            )
+            .as_deref(),
+            Some("https://github.com/vercel-labs/agent-skills")
+        );
+        assert_eq!(
+            installed_skill_source_url(
+                "github",
+                "https://github.com/example/root-skill.git",
+                "SKILL.md",
+            )
+            .as_deref(),
+            Some("https://github.com/example/root-skill")
+        );
+    }
+
+    #[test]
+    fn installed_skill_source_url_rejects_untrusted_metadata() {
+        assert!(installed_skill_source_url(
+            "git",
+            "https://github.com/example/repository.git",
+            "skills/demo/SKILL.md",
+        )
+        .is_none());
+        assert!(installed_skill_source_url(
+            "github",
+            "https://github.com.example.com/example/repository.git",
+            "skills/demo/SKILL.md",
+        )
+        .is_none());
+        assert!(installed_skill_source_url(
+            "github",
+            "https://github.com/example/repository.git",
+            "skills/../secret/SKILL.md",
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn installed_skill_source_metadata_is_merged_into_inventory() {
+        let root = skill_inventory_test_root("source-metadata");
+        write_test_skill(&root.join(".agents/skills/demo"), "demo");
+        fs::write(
+            root.join(".agents/.skill-lock.json"),
+            r#"{"version":3,"skills":{"demo":{"source":"example/repository","sourceType":"github","sourceUrl":"https://github.com/example/repository.git","skillPath":"skills/demo/SKILL.md"}}}"#,
+        )
+        .unwrap();
+
+        let skills = scan_global_skill_inventory(&root).unwrap();
+
+        assert_eq!(
+            skills[0].source_url.as_deref(),
+            Some("https://github.com/example/repository")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn global_skill_inventory_maps_agent_roots_and_sorts_records() {
+        let root = skill_inventory_test_root("agent-roots");
+        write_test_skill(&root.join(".grok/skills/zeta"), "zeta");
+        write_test_skill(&root.join(".claude/skills/alpha"), "alpha");
+
+        let skills = scan_global_skill_inventory(&root).unwrap();
+
+        assert_eq!(
+            skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "zeta"]
+        );
+        assert_eq!(skills[0].apps, vec!["claude-code"]);
+        assert_eq!(skills[1].apps, vec!["grok"]);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn uninstalling_one_skill_installation_preserves_the_duplicate() {
+        let root = skill_inventory_test_root("remove-one");
+        let agents = root.join(".agents/skills/demo");
+        let codex = root.join(".codex/skills/demo");
+        write_test_skill(&agents, "demo");
+        write_test_skill(&codex, "demo");
+        let skill = scan_global_skill_inventory(&root).unwrap().remove(0);
+        let installation = skill
+            .installations
+            .iter()
+            .find(|item| Path::new(&item.path) == codex)
+            .unwrap();
+
+        let remaining =
+            uninstall_skill_installation_at_home(&root, &skill.id, &installation.id).unwrap();
+
+        assert!(agents.join("SKILL.md").is_file());
+        assert!(!codex.exists());
+        assert!(remaining.installed);
+        assert_eq!(remaining.installations.len(), 1);
+        assert_eq!(
+            Path::new(&remaining.installations[0].path),
+            agents.as_path()
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn uninstalling_skill_directory_link_preserves_its_target() {
+        let root = skill_inventory_test_root("unlink");
+        let target = root.join(".agents/skills/demo");
+        let link = root.join(".codex/skills/demo");
+        write_test_skill(&target, "demo");
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        #[cfg(windows)]
+        if let Err(error) = std::os::windows::fs::symlink_dir(&target, &link) {
+            eprintln!("skipping directory-link test: {}", error);
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        let skill = scan_global_skill_inventory(&root).unwrap().remove(0);
+        let installation = skill
+            .installations
+            .iter()
+            .find(|item| item.is_link)
+            .unwrap();
+
+        uninstall_skill_installation_at_home(&root, &skill.id, &installation.id).unwrap();
+
+        assert!(target.join("SKILL.md").is_file());
+        assert!(fs::symlink_metadata(&link).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn uninstalling_link_target_detaches_the_other_installation() {
+        let root = skill_inventory_test_root("detach-dependent");
+        let target = root.join(".agents/skills/demo");
+        let link = root.join(".codex/skills/demo");
+        write_test_skill(&target, "demo");
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        #[cfg(windows)]
+        if let Err(error) = std::os::windows::fs::symlink_dir(&target, &link) {
+            eprintln!("skipping directory-link test: {}", error);
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        let skill = scan_global_skill_inventory(&root).unwrap().remove(0);
+        let installation = skill
+            .installations
+            .iter()
+            .find(|item| !item.is_link)
+            .unwrap();
+        let impact =
+            inspect_skill_uninstall_at_home(&root, &skill.id, Some(&installation.id)).unwrap();
+        assert_eq!(impact.dependent_paths.len(), 1);
+        assert_eq!(Path::new(&impact.dependent_paths[0]), link.as_path());
+
+        let remaining =
+            uninstall_skill_installation_at_home(&root, &skill.id, &installation.id).unwrap();
+
+        assert!(!target.exists());
+        assert!(link.join("SKILL.md").is_file());
+        assert!(!fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(remaining.installations.len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_installation_uninstall_rejects_unknown_installation_id() {
+        let root = skill_inventory_test_root("reject-forged");
+        let outside = root.join("outside/demo");
+        write_test_skill(&outside, "demo");
+        write_test_skill(&root.join(".codex/skills/demo"), "demo");
+        let skill = scan_global_skill_inventory(&root).unwrap().remove(0);
+
+        let error = uninstall_skill_installation_at_home(&root, &skill.id, "installation::forged")
+            .unwrap_err();
+
+        assert!(error.contains("未找到安装位置"));
+        assert!(outside.join("SKILL.md").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_lock_entry_is_removed_only_after_last_installation() {
+        let root = skill_inventory_test_root("lock-cleanup");
+        write_test_skill(&root.join(".agents/skills/demo"), "demo");
+        write_test_skill(&root.join(".codex/skills/demo"), "demo");
+        fs::write(
+            root.join(".agents/.skill-lock.json"),
+            r#"{"version":3,"skills":{"demo":{"source":"fixture"}},"dismissed":{"x":true}}"#,
+        )
+        .unwrap();
+        let skill = scan_global_skill_inventory(&root).unwrap().remove(0);
+
+        uninstall_skill_installation_at_home(&root, &skill.id, &skill.installations[0].id).unwrap();
+        let after_first: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(root.join(".agents/.skill-lock.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(after_first["skills"].get("demo").is_some());
+
+        let remaining = scan_global_skill_inventory(&root).unwrap().remove(0);
+        uninstall_skill_installation_at_home(&root, &remaining.id, &remaining.installations[0].id)
+            .unwrap();
+        let after_last: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(root.join(".agents/.skill-lock.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(after_last["skills"].get("demo").is_none());
+        assert_eq!(after_last["dismissed"]["x"], true);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -12882,6 +14203,8 @@ mod tests {
                 "add",
                 "shared-skill",
                 "--yes",
+                "--global",
+                "--copy",
                 "--agent",
                 "codex",
                 "antigravity",
@@ -12906,6 +14229,7 @@ mod tests {
                 "--skill",
                 "enhance-prompt",
                 "--yes",
+                "--global",
                 "--agent",
                 "codex"
             ]
@@ -12913,14 +14237,16 @@ mod tests {
     }
 
     #[test]
-    fn skill_source_settings_preserves_clicked_skill_scope() {
+    fn skill_source_settings_ignores_clicked_skill_scope() {
         let mut settings = AppSettings::default();
         settings.skill_storage_location = "agentdock".to_string();
+        settings.skill_sync_method = "symlink".to_string();
 
-        let scoped = skill_source_settings(&settings, "global");
+        let scoped = skill_source_settings(&settings, "agentdock");
         let command = skills_cli_remove_command("design-review", &scoped, None);
 
         assert_eq!(scoped.skill_storage_location, "global");
+        assert_eq!(scoped.skill_sync_method, "copy");
         assert!(command.args.iter().any(|arg| arg == "--global"));
     }
 
@@ -12938,6 +14264,8 @@ mod tests {
             installed: true,
             apps: vec!["codex".to_string()],
             updated_at: now_rfc3339(),
+            installations: Vec::new(),
+            source_url: None,
         };
 
         assert_eq!(skills_cli_remove_target(&skill), "stitch-react-native");
@@ -12984,7 +14312,7 @@ mod tests {
         let command = skills_cli_list_command(&settings);
 
         assert_eq!(command.program, "npx");
-        assert_eq!(command.args, vec!["skills", "ls", "--json"]);
+        assert_eq!(command.args, vec!["skills", "ls", "--json", "--global"]);
     }
 
     #[test]
@@ -13045,6 +14373,15 @@ mod tests {
                 "hermes".to_string(),
                 "opencode".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn skills_cli_supports_grok_install_target() {
+        assert_eq!(skills_cli_agent_name("grok"), Some("grok"));
+        assert_eq!(
+            skills_cli_supported_apps(&["grok".to_string()]),
+            vec!["grok".to_string()]
         );
     }
 
