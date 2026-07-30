@@ -10,6 +10,7 @@ coverage/
 design-proposals/
 screenshots/
 release-artifacts/
+.superpowers/
 
 # Optional offline client payloads are distributed separately
 resources/installers/

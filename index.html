@@ -692,6 +692,7 @@
         <button data-view-button="mcp" title="MCP"><i data-lucide="blocks"></i><span class="label">MCP</span><span class="nav-count" id="nav-mcp-count">--</span></button>
         <button data-view-button="stats" title="统计"><i data-lucide="chart-no-axes-combined"></i><span class="label">统计</span><span class="nav-count"></span></button>
         <button data-view-button="logs" title="诊断"><i data-lucide="scan-heart"></i><span class="label">诊断</span><span class="nav-count"></span></button>
+        <button data-view-button="operations" title="操作日志"><i data-lucide="square-terminal"></i><span class="label">操作日志</span><span class="nav-count"></span></button>
       </nav>
       <div class="rail-bottom"><button class="rail-settings" data-view-button="settings" title="设置" aria-label="打开设置"><i data-lucide="settings"></i></button></div>
     </aside>
@@ -809,11 +810,16 @@
             <header><div><h3>检查结果</h3><p id="diagnostic-result-count">0 项</p></div><span class="badge" id="diagnostic-safety"><i data-lucide="shield-check"></i>密钥已排除</span></header>
             <div class="diagnostic-list" id="diagnostic-list"></div>
           </section>
-          <details class="operation-logs">
-            <summary><span><i data-lucide="square-terminal"></i>本机操作记录</span><small id="log-count">0 条</small></summary>
-            <div class="operation-log-head"><span>仅保留本次运行期间的操作</span><button class="btn text" data-action="clear-logs"><i data-lucide="trash-2"></i>清空</button></div>
-            <pre class="log-output" id="log-output" aria-live="polite"></pre>
-          </details>
+        </section>
+
+        <section class="view" data-view="operations">
+          <div class="page-head">
+            <div><h2>操作日志</h2><p>按业务操作查看历史记录、命令输出和本地文件动作</p></div>
+            <div class="actions"><button class="btn primary" data-action="refresh-operation-records"><i data-lucide="refresh-cw"></i>刷新日志</button><button class="icon-btn" data-action="open-data-dir" title="打开数据目录" aria-label="打开数据目录"><i data-lucide="folder-open"></i></button></div>
+          </div>
+          <section class="operation-records-panel" id="operation-records-panel">
+            <div class="operation-record-detail" id="operation-record-detail"></div>
+          </section>
         </section>
 
         <section class="view settings-view" data-view="settings">
@@ -1075,6 +1081,7 @@
       mcp: ["MCP", "服务器和客户端配置"],
       stats: ["统计", "Token、请求和成本趋势"],
       logs: ["诊断", "主动检查客户端、供应商和本机配置"],
+      operations: ["操作日志", "查看历史业务操作、命令输出和本地文件动作"],
       settings: ["设置", "界面、窗口、客户端和 Skills 偏好"]
     };
     const UI_COPY = {
@@ -1291,7 +1298,7 @@
     const state = {
       desktop: Boolean(window.__TAURI_INTERNALS__), status: startupCache?.status || null, settings: { ...defaultSettings, ...(startupCache?.settings || {}), language: defaultSettings.language, theme: defaultSettings.theme }, ready: startupCache?.ready || null, providers: startupCache?.providers || [], skills: startupCache?.skills || [], mcpServers: startupCache?.mcpServers || [], softwareCatalog: startupCache?.softwareCatalog || [], appUpdate: null, appUpdateChecking: false, appUpdateInstalling: false, backgroundRefreshing: false,
       usageStats: null, usageDays: 7, trendMetric: "totalTokens", breakdown: "client",
-      activeView: "clients", activeClient: "codex", contextQuery: "", softwareFilter: "all", skillsWorkspaceView: "discovery", inspectingSkillId: "", uninstalledSkill: null, diagnosticFilter: "all",
+      activeView: "clients", activeClient: "codex", contextQuery: "", softwareFilter: "all", skillsWorkspaceView: "discovery", inspectingSkillId: "", uninstalledSkill: null, diagnosticFilter: "all", operationRecords: { items: [], total: 0, page: 0, pageSize: 25 }, operationRecordsLoading: false, operationRecordsAppending: false, operationRecordsError: "", operationCategory: "all", operationState: "all", selectedOperationTraceId: "", selectedOperation: null, selectedOperationLoading: false, selectedOperationOutput: null,
       skillsDiscovery: null, skillsDiscoveryView: "all-time", skillsDiscoveryQuery: "", skillsDiscoveryLoading: false, skillsDiscoveryPages: {}, skillTargetGroups: {}, skillFileViews: {},
       inFlightOperations: new Set(), clientOperations: new Map(), launchingClients: new Set(), workspaceMenuOpen: false, providerModelMenuOpen: false, providerModelOptions: [], providerModelRequest: 0, providerReadyRequest: 0, settingsRevision: 0, settingsSaveChain: Promise.resolve(), logs: [], diagnostics: null, diagnosticRunning: false, ccSwitchImport: null, ccSwitchImportResult: null, ccSwitchImportChecking: false, editingProviderId: null, selectedPresetId: "custom", providerFormDirty: false, providerSecretRequest: 0, editingMcpId: null, selectedMcpPreset: "custom", inspectingMcpId: null, mcpToolsResult: null, mcpToolsError: "", activeMcpToolName: "", mcpToolsRequest: 0, configManuallyEdited: false, configImportRequest: 0, confirmResolve: null, skillInstallDraft: null
     };
@@ -1355,7 +1362,7 @@
     const formatNumber = (value) => new Intl.NumberFormat(activeLocale(), { notation: Number(value) >= 100000 ? "compact" : "standard", maximumFractionDigits: 1 }).format(Number(value) || 0);
     const formatCost = (value) => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: Number(value) < 1 ? 4 : 2 })}`;
 
-    function addLog(level, message) { state.logs.push({ level, message: String(message), time: nowLabel() }); if (state.logs.length > 300) state.logs.shift(); renderLogs(); if (state.activeView === "logs" && document.getElementById("source-list")) { renderSourceSidebar(); refreshIcons(); } }
+    function addLog(level, message) { state.logs.push({ level, message: String(message), time: nowLabel() }); if (state.logs.length > 300) state.logs.shift(); renderLogs(); if (["logs", "operations"].includes(state.activeView) && document.getElementById("source-list")) { renderSourceSidebar(); refreshIcons(); } }
     function notify(message, type = "ok") {
       const toast = document.createElement("div"); toast.className = `toast ${type}`;
       toast.innerHTML = `<i data-lucide="${type === "error" ? "circle-alert" : "circle-check"}"></i><p>${escapeHtml(message)}</p>`;
@@ -1487,6 +1494,26 @@
           { id: "usage-data", category: "统计", status: "pass", title: "本地统计数据可读取", detail: "已识别：Codex 会话、Claude Code 会话", action: "" }
         ]
       };
+      if (command === "list_operation_records") {
+        const now = Date.now() * 1000000;
+        const items = [
+          { traceId: "11111111111111111111111111111111", name: "agentdock.clients.detect", displayName: "Detect clients", category: "client", targetType: "clients", targetId: "all", trigger: "manual", state: "success", startedTimeUnixNano: now - 8000000000, endedTimeUnixNano: now - 6500000000, spanCount: 7, logCount: 2 },
+          { traceId: "22222222222222222222222222222222", name: "agentdock.skill.install", displayName: "Install Skill", category: "skill", targetType: "skill", targetId: "review", trigger: "manual", state: "success", startedTimeUnixNano: now - 18000000000, endedTimeUnixNano: now - 12000000000, spanCount: 3, logCount: 4 },
+          { traceId: "33333333333333333333333333333333", name: "agentdock.client.launch", displayName: "Launch client", category: "client", targetType: "client", targetId: "codex", trigger: "manual", state: "success", startedTimeUnixNano: now - 28000000000, endedTimeUnixNano: now - 27000000000, spanCount: 2, logCount: 1 }
+        ];
+        const page = args.query?.page || 0;
+        const pageSize = args.query?.pageSize || 25;
+        return { items: items.slice(page * pageSize, (page + 1) * pageSize), total: items.length, page, pageSize };
+      }
+      if (command === "get_operation_record") {
+        const traceId = args.traceId || args.trace_id;
+        const root = traceId === "22222222222222222222222222222222" ? "agentdock.skill.install" : "agentdock.clients.detect";
+        return { summary: { traceId, name: root, displayName: root, category: root.includes("skill") ? "skill" : "client", targetType: "mock", targetId: "all", trigger: "manual", state: "success", startedTimeUnixNano: Date.now() * 1000000 - 8000000000, endedTimeUnixNano: Date.now() * 1000000 - 6000000000, spanCount: 2, logCount: 2 }, spans: [
+          { spanId: "aaaaaaaaaaaaaaaa", parentSpanId: null, name: root, startTimeUnixNano: Date.now() * 1000000 - 8000000000, endTimeUnixNano: Date.now() * 1000000 - 6000000000, statusCode: 1, statusMessage: "", attributes: [], stdoutBytes: 0, stderrBytes: 0, stdoutPreview: null, stderrPreview: null },
+          { spanId: "bbbbbbbbbbbbbbbb", parentSpanId: "aaaaaaaaaaaaaaaa", name: "agentdock.command", startTimeUnixNano: Date.now() * 1000000 - 7800000000, endTimeUnixNano: Date.now() * 1000000 - 7000000000, statusCode: 1, statusMessage: "", attributes: [{ key: "process.command_args", value: { StringArray: ["skills", "install", "review"] } }, { key: "process.cwd", value: { String: "/Users/demo/project" } }], stdoutBytes: 87, stderrBytes: 0, stdoutPreview: "downloading 10%\n\u001b[32mDone!\u001b[39m Installed into /Users/demo/.agents/skills", stderrPreview: null }
+        ] };
+      }
+      if (command === "get_operation_output") return { traceId: args.query.traceId, spanId: args.query.spanId, stream: args.query.stream, offset: args.query.offset || 0, limit: args.query.limit || 65536, totalBytes: 58, text: "skills install review\nInstalled into /Users/demo/.agents/skills\n", bytesBase64: null };
       if (command === "list_providers") return structuredClone(mock.providers);
       if (command === "get_provider_api_key") return mock.providers.some((item) => item.id === args.providerId && item.apiKeyConfigured) ? "sk-preview-saved-key" : "";
       if (command === "save_provider") {
@@ -1622,7 +1649,7 @@
     }
 
     function localizeUi() {
-      const navFallback = { clients: "客户端", software: "推荐软件", skills: "Skills", mcp: "MCP", stats: "统计", logs: "诊断" };
+      const navFallback = { clients: "客户端", software: "推荐软件", skills: "Skills", mcp: "MCP", stats: "统计", logs: "诊断", operations: "操作日志" };
       for (const [view, fallback] of Object.entries(navFallback)) {
         const label = tr(`nav.${view}`, fallback); const button = document.querySelector(`[data-view-button="${view}"]`);
         setText(`[data-view-button="${view}"] .label`, label); if (button) button.title = label;
@@ -1636,6 +1663,7 @@
         mcp: [tr("page.mcp.title", "MCP 服务器"), tr("page.mcp.desc", "统一管理服务器，并同步到各客户端的真实配置文件")],
         stats: [tr("page.stats.title", "用量统计"), tr("page.stats.desc", "汇总本机客户端会话中的 Token、请求和可计算成本")],
         logs: [tr("page.logs.title", "诊断中心"), tr("page.logs.desc", "检查本机目录、客户端、供应商连接、MCP 和统计数据，不读取或展示密钥")],
+        operations: [tr("page.operations.title", "操作日志"), tr("page.operations.desc", "按业务操作查看历史记录、命令输出和本地文件动作")],
         settings: [tr("settings.title", "设置"), tr("settings.subtitle", "调整 AgentDock 的界面、窗口、客户端和 Skills 行为")]
       };
       for (const [view, [title, description]] of Object.entries(pageCopy)) { setText(`.view[data-view="${view}"] .page-head h2`, title); setText(`.view[data-view="${view}"] .page-head p`, description); }
@@ -1999,10 +2027,11 @@
         mcp: [tr("page.mcp.title", "MCP 服务器"), trf("count.enabled", "{count} 个已启用", { count: state.mcpServers.filter((server) => server.enabled).length }), "plus", tr("添加 MCP 服务器", "添加 MCP 服务器")],
         stats: [tr("nav.stats", "统计"), trf("range.days", "近 {days} 天", { days: state.usageDays }), "refresh-cw", tr("刷新统计", "刷新统计")],
         logs: [tr("nav.logs", "诊断"), state.diagnostics ? trf("count.checks", "{count} 项检查", { count: state.diagnostics.checks.length }) : tr("尚未检测", "尚未检测"), "scan-heart", tr("重新运行诊断", "重新运行诊断")],
+        operations: [tr("nav.operations", "操作日志"), trf("logs.count", "{shown}/{total} 条", { shown: state.operationRecords.items.length, total: state.operationRecords.total || state.operationRecords.items.length }), "refresh-cw", tr("刷新操作日志", "刷新操作日志")],
         settings: [tr("nav.settings", "设置"), tr("source.general", "通用"), "refresh-cw", tr("重新读取设置", "重新读取设置")]
       }[state.activeView];
       title.textContent = sourceAction[0]; summary.textContent = sourceAction[1]; action.title = sourceAction[3]; action.setAttribute("aria-label", sourceAction[3]); action.innerHTML = `<i data-lucide="${sourceAction[2]}"></i>`;
-      const searchEnabled = !["stats", "settings"].includes(state.activeView); search.disabled = !searchEnabled; searchShell.classList.toggle("disabled", !searchEnabled); search.placeholder = state.activeView === "logs" ? tr("search.logs", "搜索诊断项") : state.activeView === "mcp" ? tr("search.mcp", "搜索服务器") : tr("search.filter", "筛选当前列表"); search.setAttribute("aria-label", search.placeholder);
+      const searchEnabled = !["stats", "settings"].includes(state.activeView); search.disabled = !searchEnabled; searchShell.classList.toggle("disabled", !searchEnabled); search.placeholder = state.activeView === "logs" ? tr("search.logs", "搜索诊断项") : state.activeView === "operations" ? tr("search.operations", "搜索操作日志") : state.activeView === "mcp" ? tr("search.mcp", "搜索服务器") : tr("search.filter", "筛选当前列表"); search.setAttribute("aria-label", search.placeholder);
       if (state.activeView === "clients") {
         const detecting = !state.status;
         const clients = visibleClientIds().map((id) => ({ id, meta: clientMeta(id), client: state.status?.clients.find((item) => item.id === id), catalog: state.softwareCatalog.find((item) => item.clientId === id) })).filter(({ id, meta }) => contextMatches(id, meta.name));
@@ -2024,6 +2053,13 @@
         list.innerHTML = `<div class="source-group-label"><span>${tr("已添加", "已添加")}</span><b>${servers.length}</b></div>${rows || `<div class="source-empty"><i data-lucide="blocks"></i>${tr("还没有 MCP 服务器", "还没有 MCP 服务器")}</div>`}`;
       } else if (state.activeView === "stats") {
         list.innerHTML = `<div class="source-group-label">${tr("时间范围", "时间范围")}</div>${[7, 30, 90].map((days) => sourceFilterButton(String(days), trf("range.days", "近 {days} 天", { days }), days === 7 ? "calendar-days" : days === 30 ? "calendar-range" : "calendar", undefined, state.usageDays === days, "set-stats-days")).join("")}<div class="source-rule"></div><div class="source-group-label">${tr("分组方式", "分组方式")}</div>${sourceFilterButton("client", tr("按客户端", "按客户端"), "monitor", undefined, state.breakdown === "client", "set-breakdown")}${sourceFilterButton("provider", tr("按供应商", "按供应商"), "network", undefined, state.breakdown === "provider", "set-breakdown")}${sourceFilterButton("model", tr("按模型", "按模型"), "box", undefined, state.breakdown === "model", "set-breakdown")}`;
+      } else if (state.activeView === "operations") {
+        const records = state.operationRecords.items || [];
+        const rows = records.map(operationSourceItemHtml).join("");
+        const total = state.operationRecords.total || records.length;
+        const hasMore = records.length < total;
+        const more = hasMore ? `<button class="source-filter operation-load-more" data-action="load-more-operation-records"><i class="${state.operationRecordsAppending ? "spin" : ""}" data-lucide="${state.operationRecordsAppending ? "loader-circle" : "chevrons-down"}"></i><span>${state.operationRecordsAppending ? tr("正在加载更多", "正在加载更多") : tr("加载更多", "加载更多")}</span><b>${records.length}/${total}</b></button>` : records.length ? `<div class="source-empty compact"><i data-lucide="check-check"></i>${tr("已显示全部操作", "已显示全部操作")}</div>` : "";
+        list.innerHTML = `<div class="source-group-label">${tr("操作状态", "操作状态")}</div>${sourceFilterButton("all", "Any state", "list-checks", records.length, state.operationState === "all", "set-operation-state")}${sourceFilterButton("success", "Success", "circle-check", undefined, state.operationState === "success", "set-operation-state")}${sourceFilterButton("error", "Error", "circle-x", undefined, state.operationState === "error", "set-operation-state")}<div class="source-rule"></div><div class="source-group-label"><span>${tr("历史操作", "历史操作")}</span><b>${records.length}/${total}</b></div>${state.operationRecordsLoading && !records.length ? `<div class="source-empty"><i class="spin" data-lucide="loader-circle"></i>${tr("正在加载操作日志", "正在加载操作日志")}</div>` : state.operationRecordsError ? `<div class="source-empty"><i data-lucide="circle-alert"></i>${escapeHtml(state.operationRecordsError)}</div>` : rows ? `${rows}${more}` : `<div class="source-empty"><i data-lucide="database"></i>${tr("还没有历史操作", "还没有历史操作")}</div>`}`;
       } else if (state.activeView === "settings") {
         list.innerHTML = `<div class="source-group-label">${tr("source.settingsCategory", "设置分类")}</div><button class="source-filter active" aria-current="page"><i data-lucide="sliders-horizontal"></i><span>${tr("source.general", "通用")}</span></button><div class="source-rule"></div><div class="source-empty"><i data-lucide="cloud-check"></i>${tr("source.settingsHint", "通用设置会自动保存到本机")}</div>`;
       } else {
@@ -2032,7 +2068,7 @@
       }
     }
 
-    function renderAll() { renderHeader(); renderClients(); renderSoftware(); renderSkills(); renderMcp(); renderStats(); renderLogs(); renderSettings(); renderSourceSidebar(); refreshIcons(); }
+    function renderAll() { renderHeader(); renderClients(); renderSoftware(); renderSkills(); renderMcp(); renderStats(); renderLogs(); renderOperationRecords(); renderSettings(); renderSourceSidebar(); refreshIcons(); }
     function renderAppUpdate() {
       const button = document.getElementById("app-update-button");
       const visible = Boolean(state.appUpdateInstalling || (state.appUpdate?.supported && state.appUpdate?.available));
@@ -2577,8 +2613,238 @@
     }
     function renderLogs() {
       const output = document.getElementById("log-output"); const logs = state.logs.filter((item) => contextMatches(item.message, item.level, item.time));
-      document.getElementById("log-count").textContent = trf("logs.count", "{shown}/{total} 条", { shown: logs.length, total: state.logs.length }); output.innerHTML = logs.length ? logs.map((item) => `<span class="log-line ${item.level}">[${item.time}] [${item.level}] ${escapeHtml(item.message)}</span>`).join("") : `<span class="log-line info">${tr("本次运行还没有操作记录", "本次运行还没有操作记录")}</span>`; output.scrollTop = output.scrollHeight;
+      const count = document.getElementById("log-count"); if (count) count.textContent = trf("logs.count", "{shown}/{total} 条", { shown: logs.length, total: state.logs.length });
+      if (output) { output.innerHTML = logs.length ? logs.map((item) => `<span class="log-line ${item.level}">[${item.time}] [${item.level}] ${escapeHtml(item.message)}</span>`).join("") : `<span class="log-line info">${tr("本次运行还没有操作记录", "本次运行还没有操作记录")}</span>`; output.scrollTop = output.scrollHeight; }
       renderDiagnostics();
+    }
+    function operationDate(nanos) {
+      const date = new Date(Number(nanos || 0) / 1000000);
+      return Number.isNaN(date.getTime()) ? "" : date.toLocaleString(activeLocale(), { hour12: false });
+    }
+    function operationShortTime(nanos) {
+      const date = new Date(Number(nanos || 0) / 1000000);
+      if (Number.isNaN(date.getTime())) return "";
+      const pad = (value) => String(value).padStart(2, "0");
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
+    function operationDuration(item) {
+      if (!item?.endedTimeUnixNano) return "running";
+      const ms = Math.max(0, Math.round((Number(item.endedTimeUnixNano) - Number(item.startedTimeUnixNano)) / 1000000));
+      return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1)} s`;
+    }
+    function operationStateClass(value) { return value === "success" ? "ok" : value === "error" ? "danger" : "warn"; }
+    function operationActionLabel(item) {
+      const name = String(item?.name || "").toLowerCase();
+      if (name.includes("skill.install")) return "安装 Skill";
+      if (name.includes("skill.uninstall")) return "卸载 Skill";
+      if (name.includes("skill.enable")) return "启用 Skill";
+      if (name.includes("skill.disable")) return "停用 Skill";
+      if (name.includes("skills.sync")) return "同步 Skills";
+      if (name.includes("client.install")) return "安装 / 更新客户端";
+      if (name.includes("client.uninstall")) return "卸载客户端";
+      if (name.includes("client.launch")) return "打开客户端";
+      if (name.includes("clients.detect")) return "检测本机客户端";
+      return item?.name || "系统操作";
+    }
+    function operationObjectLabel(item) {
+      const category = String(item?.category || "").toLowerCase();
+      const name = String(item?.name || "").toLowerCase();
+      const target = item?.targetId || "";
+      if (category === "client" || name.includes("client.")) {
+        if (!target || target === "all") return "全部客户端";
+        return clientMeta(target).name || target;
+      }
+      if (category === "skill" || name.includes("skill.")) {
+        return target && target !== "all" ? target : "Skills";
+      }
+      return target && target !== "all" ? target : (item?.targetType || item?.category || "AgentDock");
+    }
+    function operationKindLabel(item) {
+      const name = String(item?.name || "").toLowerCase();
+      if (name.includes("skill.")) return "skill";
+      if (name.includes("client.")) return "client";
+      return item?.category || "system";
+    }
+    function operationSourceItemHtml(item) {
+      const active = state.selectedOperationTraceId === item.traceId ? "active" : "";
+      const object = operationObjectLabel(item);
+      return `<button class="source-item operation-source-item ${active}" data-action="select-operation-record" data-id="${escapeHtml(item.traceId)}"><span class="operation-state-dot ${operationStateClass(item.state)}"></span><span class="source-copy"><strong>${escapeHtml(item.name || "operation")}</strong><small>${escapeHtml(object)}</small><span class="operation-source-timing"><time>${escapeHtml(operationShortTime(item.startedTimeUnixNano))}</time><b>${operationDuration(item)}</b></span></span></button>`;
+    }
+    function otlpValueText(value) {
+      if (!value || typeof value !== "object") return String(value ?? "");
+      if ("String" in value) return value.String;
+      if ("StringArray" in value) return value.StringArray.join(" ");
+      if ("Int" in value) return value.Int;
+      if ("Bool" in value) return value.Bool;
+      if ("Double" in value) return value.Double;
+      if ("Bytes" in value) return "[bytes]";
+      const first = Object.values(value)[0];
+      return Array.isArray(first) ? first.join(" ") : String(first ?? "");
+    }
+    function renderOperationRecords() {
+      const panel = document.getElementById("operation-records-panel"); if (!panel) return;
+      document.querySelectorAll('[data-action="set-operation-category"]').forEach((button) => button.classList.toggle("active", button.dataset.id === state.operationCategory));
+      document.querySelectorAll('[data-action="set-operation-state"]').forEach((button) => button.classList.toggle("active", button.dataset.id === state.operationState));
+      const detail = document.getElementById("operation-record-detail");
+      if (state.selectedOperationLoading) detail.innerHTML = `<div class="diagnostic-empty"><i class="spin" data-lucide="loader-circle"></i><strong>Loading detail</strong></div>`;
+      else if (state.operationRecordsLoading) detail.innerHTML = `<div class="diagnostic-empty"><i class="spin" data-lucide="loader-circle"></i><strong>Loading records</strong></div>`;
+      else if (state.operationRecordsError) detail.innerHTML = `<div class="diagnostic-empty"><i data-lucide="circle-alert"></i><strong>${escapeHtml(state.operationRecordsError)}</strong></div>`;
+      else if (!state.selectedOperation) detail.innerHTML = `<div class="diagnostic-empty"><i data-lucide="mouse-pointer-2"></i><strong>Select an operation</strong><small>Use the operation list in the left navigation to inspect details.</small></div>`;
+      else detail.innerHTML = operationDetailHtml(state.selectedOperation);
+      refreshIcons();
+    }
+    function operationDetailHtml(detail) {
+      const summary = detail.summary;
+      const meta = [
+        operationMetaItemHtml("State", summary.state, operationStateClass(summary.state)),
+        operationMetaItemHtml("Category", summary.category),
+        operationMetaItemHtml("Trigger", summary.trigger),
+        operationMetaItemHtml("Target", summary.targetId || summary.targetType || "-"),
+        operationMetaItemHtml("Started", operationShortTime(summary.startedTimeUnixNano)),
+        operationMetaItemHtml("Duration", operationDuration(summary)),
+        operationMetaItemHtml("Spans", String((detail.spans || []).length)),
+        operationMetaItemHtml("Trace", summary.traceId, "trace")
+      ].join("");
+      return `<section class="operation-detail-head"><div class="operation-detail-title"><span class="operation-state-dot ${operationStateClass(summary.state)}"></span><div><h3>${escapeHtml(summary.name)}</h3><p>${escapeHtml(operationObjectLabel(summary))}</p></div></div><button class="btn text" data-action="copy-operation-trace" data-id="${escapeHtml(summary.traceId)}"><i data-lucide="copy"></i>Trace ID</button><div class="operation-trace-meta">${meta}</div></section>${operationMergedLogHtml(detail)}`;
+    }
+    function operationMetaItemHtml(label, value, className = "") {
+      if (!value) return "";
+      return `<span class="operation-meta-item ${className}"><label>${escapeHtml(label)}</label><code>${escapeHtml(value)}</code></span>`;
+    }
+    function operationAttr(span, key) {
+      return span.attributes?.find((attr) => attr.key === key);
+    }
+    function operationSpanStatus(span) {
+      const label = span.statusCode === 2 ? "error" : "success";
+      const duration = operationDuration({ startedTimeUnixNano: span.startTimeUnixNano, endedTimeUnixNano: span.endTimeUnixNano });
+      return `${label} · ${duration}${span.statusMessage ? ` · ${span.statusMessage}` : ""}`;
+    }
+    function operationCommandSignature(commandText) {
+      return `$ ${commandText}`;
+    }
+    function operationMergedLogText(detail) {
+      const chunks = [];
+      (detail.spans || []).forEach((span) => {
+        if (span.name === "agentdock.command") {
+          const command = operationAttr(span, "process.command_args") || operationAttr(span, "process.command");
+          const commandText = command ? otlpValueText(command.value) : span.name;
+          chunks.push(operationCommandSignature(commandText));
+          if (span.stdoutPreview) chunks.push("", String(span.stdoutPreview));
+          if (span.stderrPreview) chunks.push("", "[stderr]", String(span.stderrPreview));
+          chunks.push("", `# result: ${operationSpanStatus(span)}`);
+          chunks.push("");
+          return;
+        }
+        if (span.name === "agentdock.local_action") {
+          const actionKind = operationAttr(span, "agentdock.local_action.kind");
+          const actionPath = operationAttr(span, "file.path");
+          const actionResult = operationAttr(span, "agentdock.local_action.result");
+          const action = otlpValueText(actionKind?.value) || "local_action";
+          const path = actionPath ? ` ${otlpValueText(actionPath.value)}` : "";
+          chunks.push(`$ local ${action}${path}`);
+          if (actionResult) chunks.push(String(otlpValueText(actionResult.value)));
+          chunks.push(`# result: ${operationSpanStatus(span)}`);
+          chunks.push("");
+        }
+      });
+      return chunks.join("\n").trim();
+    }
+    function operationMergedLogHtml(detail) {
+      const text = operationMergedLogText(detail);
+      if (!text) return `<section class="operation-merged-log empty"><pre>No command output was recorded for this operation.</pre></section>`;
+      return `<section class="operation-merged-log"><header><span><i data-lucide="terminal"></i><strong>Command log</strong></span><small>merged · rendered ANSI</small></header><pre>${ansiToHtml(text)}</pre></section>`;
+    }
+    function operationFullOutputHtml(output) {
+      const text = output.text || output.bytesBase64 || "";
+      const stream = output.stream || "output";
+      return `<section class="operation-full-output"><header><strong>Full ${escapeHtml(stream)}</strong><small>${escapeHtml(String(output.totalBytes || 0))} bytes · Rendered ANSI</small></header><pre class="operation-output">${ansiToHtml(text)}</pre></section>`;
+    }
+    function operationOutputBlock(stream, text) {
+      const errorClass = stream === "stderr" ? " error" : "";
+      return `<div class="operation-stream${errorClass}"><div class="operation-stream-tabs"><label>${stream}</label><span>Rendered ANSI</span></div><pre>${ansiToHtml(text)}</pre></div>`;
+    }
+    function normalizeTerminalOutput(text) {
+      const input = String(text ?? "");
+      const lines = [];
+      let line = "";
+      let index = 0;
+      while (index < input.length) {
+        const char = input[index];
+        if (char === "\u001b" && input[index + 1] === "[") {
+          const match = input.slice(index).match(/^\u001b\[([?0-9;]*)([A-Za-z])/);
+          if (match) {
+            const sequence = match[0];
+            const command = match[2];
+            if (command === "m") line += sequence;
+            else if (command === "G" || command === "J" || command === "K") line = "";
+            index += sequence.length;
+            continue;
+          }
+        }
+        if (char === "\r") { line = ""; index += 1; continue; }
+        if (char === "\n") { lines.push(line); line = ""; index += 1; continue; }
+        line += char;
+        index += 1;
+      }
+      lines.push(line);
+      return lines.join("\n");
+    }
+    function ansiToHtml(text) {
+      const input = normalizeTerminalOutput(text);
+      const colors = { 30: "ansi-fg-black", 31: "ansi-fg-red", 32: "ansi-fg-green", 33: "ansi-fg-yellow", 34: "ansi-fg-blue", 35: "ansi-fg-magenta", 36: "ansi-fg-cyan", 37: "ansi-fg-white", 90: "ansi-fg-bright-black", 91: "ansi-fg-bright-red", 92: "ansi-fg-bright-green", 93: "ansi-fg-bright-yellow", 94: "ansi-fg-bright-blue", 95: "ansi-fg-bright-magenta", 96: "ansi-fg-bright-cyan", 97: "ansi-fg-bright-white" };
+      let html = ""; let index = 0; let classes = [];
+      const close = () => classes.length ? "</span>" : "";
+      const open = () => classes.length ? `<span class="${classes.join(" ")}">` : "";
+      const apply = (code) => {
+        if (code === 0 || code === 39) classes = classes.filter((item) => !item.startsWith("ansi-fg-"));
+        if (code === 0) classes = [];
+        if (code === 1 && !classes.includes("ansi-bold")) classes.push("ansi-bold");
+        if (code === 2 && !classes.includes("ansi-dim")) classes.push("ansi-dim");
+        if (code === 22) classes = classes.filter((item) => item !== "ansi-bold" && item !== "ansi-dim");
+        if (colors[code]) classes = classes.filter((item) => !item.startsWith("ansi-fg-")).concat(colors[code]);
+      };
+      input.replace(/\x1b\[([0-9;]*)m/g, (match, codes, offset) => {
+        html += escapeHtml(input.slice(index, offset));
+        html += close();
+        String(codes || "0").split(";").map((part) => Number(part || 0)).forEach(apply);
+        html += open();
+        index = offset + match.length;
+        return match;
+      });
+      html += escapeHtml(input.slice(index));
+      html += close();
+      return html;
+    }
+    async function refreshOperationRecords({ append = false } = {}) {
+      if (append) state.operationRecordsAppending = true;
+      else { state.operationRecordsLoading = true; state.operationRecords.page = 0; }
+      state.operationRecordsError = ""; renderOperationRecords(); renderSourceSidebar();
+      try {
+        const page = append ? (state.operationRecords.page || 0) + 1 : 0;
+        const query = { page, pageSize: state.operationRecords.pageSize, category: "all", state: state.operationState, search: state.contextQuery };
+        const result = await call("list_operation_records", { query });
+        state.operationRecords = append ? { ...result, items: [...(state.operationRecords.items || []), ...(result.items || [])] } : result;
+        const selectedStillVisible = state.operationRecords.items.some((item) => item.traceId === state.selectedOperationTraceId);
+        if (state.operationRecords.items[0] && (!state.selectedOperationTraceId || !selectedStillVisible)) await loadOperationRecord(state.operationRecords.items[0].traceId);
+        if (!state.operationRecords.items.length) { state.selectedOperationTraceId = ""; state.selectedOperation = null; state.selectedOperationOutput = null; }
+      } catch (error) { state.operationRecordsError = errorText(error); }
+      finally { state.operationRecordsLoading = false; state.operationRecordsAppending = false; renderOperationRecords(); renderSourceSidebar(); }
+    }
+    async function loadMoreOperationRecords() {
+      if (state.operationRecordsAppending || state.operationRecordsLoading) return;
+      if ((state.operationRecords.items || []).length >= (state.operationRecords.total || 0)) return;
+      return refreshOperationRecords({ append: true });
+    }
+    async function loadOperationRecord(traceId) {
+      state.selectedOperationTraceId = traceId; state.selectedOperationLoading = true; state.selectedOperationOutput = null; renderOperationRecords(); renderSourceSidebar();
+      try { state.selectedOperation = await call("get_operation_record", { traceId }); }
+      catch (error) { state.selectedOperation = null; state.operationRecordsError = errorText(error); }
+      finally { state.selectedOperationLoading = false; renderOperationRecords(); renderSourceSidebar(); }
+    }
+    async function loadOperationOutput(spanId, stream) {
+      if (!state.selectedOperationTraceId) return;
+      state.selectedOperationOutput = await call("get_operation_output", { query: { traceId: state.selectedOperationTraceId, spanId, stream, offset: 0, limit: 65536 } });
+      renderOperationRecords();
     }
     function localizeDiagnosticText(value) {
       if (!value) return value;
@@ -2709,10 +2975,12 @@
       if (name === "mcp") renderMcp();
       if (name === "stats") renderStats();
       if (name === "logs") renderLogs();
+      if (name === "operations") renderOperationRecords();
       if (name === "settings") renderSettings();
       renderSourceSidebar(); refreshIcons();
       if (name === "skills" && !state.skillsDiscovery && !state.skillsDiscoveryLoading) refreshSkillDiscovery().catch((error) => { addLog("error", errorText(error)); notify(errorText(error), "error"); });
       if (name === "logs" && !state.diagnostics && !state.diagnosticRunning) refreshDiagnostics().catch((error) => { addLog("error", errorText(error)); notify(errorText(error), "error"); });
+      if (name === "operations" && !state.operationRecords.items.length && !state.operationRecordsLoading) refreshOperationRecords().catch((error) => { addLog("error", errorText(error)); notify(errorText(error), "error"); });
     }
     function findPreset(id) { return (PRESETS[state.activeClient] || COMMON_PRESETS).find((preset) => preset.id === id); }
     function visiblePresets() { const query = document.getElementById("preset-search")?.value.trim().toLowerCase() || ""; return (PRESETS[state.activeClient] || COMMON_PRESETS).filter((preset) => !query || preset.name.toLowerCase().includes(query)); }
@@ -3161,7 +3429,7 @@
       if (action === "install-app-update") return installAppUpdate();
       if (action === "confirm-cancel") return closeConfirm(false);
       if (action === "confirm-accept") return closeConfirm(true);
-      if (action === "context-action") return handleAction({ clients: "refresh-all", software: "refresh-catalog", skills: "refresh-skills", mcp: "new-mcp", stats: "refresh-stats", logs: "run-diagnostics", settings: "refresh-settings" }[state.activeView], button);
+      if (action === "context-action") return handleAction({ clients: "refresh-all", software: "refresh-catalog", skills: "refresh-skills", mcp: "new-mcp", stats: "refresh-stats", logs: "run-diagnostics", operations: "refresh-operation-records", settings: "refresh-settings" }[state.activeView], button);
       if (action === "refresh-all") return withBusy(button, async () => { await loadAll(); notify(tr("action.statusRefreshed", "状态已刷新")); });
       if (action === "refresh-settings") return withBusy(button, async () => { state.settings = await call("get_app_settings"); applyAppearance(); renderSettings(); renderClients(); renderSourceSidebar(); renderHeader(); refreshIcons(); notify(tr("action.settingsReloaded", "设置已重新读取")); });
       if (action === "import-cc-switch") return withBusy(button, () => checkCcSwitchImport({ force: true }));
@@ -3175,6 +3443,13 @@
       if (action === "select-software-client") { state.activeClient = id; showView("clients"); renderClients(); refreshIcons(); return; }
       if (action === "set-software-filter") { state.softwareFilter = id; renderSoftware(); renderSourceSidebar(); refreshIcons(); return; }
       if (action === "set-diagnostic-filter") { state.diagnosticFilter = id; renderLogs(); renderSourceSidebar(); refreshIcons(); return; }
+      if (action === "set-operation-category") { state.operationCategory = id; state.operationRecords.page = 0; state.selectedOperationTraceId = ""; state.selectedOperation = null; renderOperationRecords(); return refreshOperationRecords(); }
+      if (action === "set-operation-state") { state.operationState = id; state.operationRecords.page = 0; state.selectedOperationTraceId = ""; state.selectedOperation = null; renderOperationRecords(); return refreshOperationRecords(); }
+      if (action === "refresh-operation-records") return withBusy(button, refreshOperationRecords);
+      if (action === "load-more-operation-records") return withBusy(button, loadMoreOperationRecords);
+      if (action === "select-operation-record") return loadOperationRecord(id);
+      if (action === "load-operation-output") return withBusy(button, () => loadOperationOutput(id, button.dataset.stream));
+      if (action === "copy-operation-trace") { await navigator.clipboard?.writeText(id); notify("Trace ID copied"); return; }
       if (action === "focus-diagnostic-status") return focusDiagnosticStatus(String(id));
       if (action === "focus-software") { state.softwareFilter = "all"; renderSoftware(); renderSourceSidebar(); refreshIcons(); document.querySelector(`[data-software-id="${CSS.escape(id)}"]`)?.scrollIntoView({ behavior: "smooth", block: "center" }); return; }
       if (action === "show-skill-discovery") { state.skillsWorkspaceView = "discovery"; state.inspectingSkillId = ""; state.uninstalledSkill = null; renderSkills(); renderSourceSidebar(); refreshIcons(); return; }
@@ -3304,6 +3579,7 @@
       if (state.activeView === "skills") renderSkills();
       if (state.activeView === "mcp") renderMcp();
       if (state.activeView === "logs") renderLogs();
+      if (state.activeView === "operations") refreshOperationRecords();
       renderSourceSidebar(); refreshIcons();
     });
     document.getElementById("preset-search").addEventListener("input", renderPresetGrid);

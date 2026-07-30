@@ -15,16 +15,17 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
 use std::{
+    cell::RefCell,
     collections::{BTreeMap, HashMap, HashSet},
     env,
     ffi::OsString,
     fs,
-    io::{BufRead, BufReader, Cursor, Read, Write},
+    io::{BufRead, BufReader, Cursor, Read},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex, OnceLock,
+        Arc, Mutex, OnceLock,
     },
     time::Instant,
 };
@@ -38,6 +39,12 @@ static TRAY_AVAILABLE: AtomicBool = AtomicBool::new(false);
 static CLIENT_DETECTION_CACHE: OnceLock<Mutex<Option<(Instant, Vec<ClientStatus>)>>> =
     OnceLock::new();
 static SKILLS_WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+#[cfg(test)]
+static TEST_COMMAND_PATH_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static TELEMETRY_STORE: OnceLock<Arc<telemetry::TelemetryStore>> = OnceLock::new();
+thread_local! {
+    static CURRENT_OPERATION_SPAN: RefCell<Option<telemetry::SpanContext>> = const { RefCell::new(None) };
+}
 const MANAGED_CLI_MARKER: &str = "AgentDock managed CLI shim";
 const MANAGED_PATH_BLOCK_START: &str = "# >>> AgentDock CLI >>>";
 const MANAGED_PATH_BLOCK_END: &str = "# <<< AgentDock CLI <<<";
@@ -45,6 +52,8 @@ const SKILLS_CLI_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1
 const SKILLS_CLI_TIMEOUT_MESSAGE: &str = "Skills CLI 执行超时（3 分钟），请检查网络或 npm 状态";
 const SKILL_FILE_PREVIEW_LIMIT: u64 = 1_048_576;
 use time::{format_description::well_known::Rfc3339, Duration, OffsetDateTime};
+
+mod telemetry;
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -693,11 +702,23 @@ struct UsageRecord {
     cost_usd: Option<f64>,
 }
 
-fn desktop_status() -> Result<DesktopStatus, String> {
+fn desktop_status(trigger: &str) -> Result<DesktopStatus, String> {
     let dirs = agentdock_dirs()?;
     ensure_dirs(&dirs)?;
-
-    Ok(DesktopStatus {
+    let operation = telemetry_store(&dirs).ok().and_then(|store| {
+        store
+            .begin_operation(telemetry::OperationStart {
+                name: "agentdock.clients.detect",
+                display_name: "检测本机客户端",
+                category: "client",
+                target_type: "clients",
+                target_id: "all",
+                trigger,
+            })
+            .ok()
+    });
+    let clients = refresh_client_detection_traced(operation.as_ref());
+    let status = DesktopStatus {
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         platform: env::consts::OS.to_string(),
         data_dir: display_path(&dirs.data_dir),
@@ -706,15 +727,58 @@ fn desktop_status() -> Result<DesktopStatus, String> {
             .map(|path| display_path(&path))
             .unwrap_or_default(),
         managed_runtime_ready: dirs.runtime_dir.exists(),
-        clients: refresh_client_detection(),
-    })
+        clients,
+    };
+    if let Some(operation) = operation {
+        let _ = operation.finish_ok();
+    }
+
+    Ok(status)
 }
 
 #[tauri::command]
-async fn get_desktop_status() -> Result<DesktopStatus, String> {
-    tauri::async_runtime::spawn_blocking(desktop_status)
+async fn get_desktop_status(trigger: Option<String>) -> Result<DesktopStatus, String> {
+    let trigger = normalize_telemetry_trigger(trigger.as_deref());
+    tauri::async_runtime::spawn_blocking(move || desktop_status(trigger))
         .await
         .map_err(|error| format!("客户端检测任务失败: {}", error))?
+}
+
+#[tauri::command]
+async fn list_operation_records(
+    query: telemetry::OperationQuery,
+) -> Result<telemetry::OperationPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dirs = agentdock_dirs()?;
+        let store = telemetry_store(&dirs)?;
+        store.list_operations(query)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn get_operation_record(trace_id: String) -> Result<telemetry::OperationDetail, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dirs = agentdock_dirs()?;
+        let store = telemetry_store(&dirs)?;
+        store.operation_detail(&trace_id)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn get_operation_output(
+    query: telemetry::OutputQuery,
+) -> Result<telemetry::OutputPage, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let dirs = agentdock_dirs()?;
+        let store = telemetry_store(&dirs)?;
+        store.operation_output(query)
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -3526,6 +3590,27 @@ fn run_managed_cli_command(client_id: &str, args: &[OsString]) -> Result<i32, St
 
 #[tauri::command]
 async fn install_client(client_id: String) -> Result<InstallClientResult, String> {
+    let target_id = client_id.clone();
+    let operation = begin_business_operation(
+        "agentdock.client.install",
+        "Install client",
+        "client",
+        "client",
+        &target_id,
+        "manual",
+    );
+    let operation_span = operation
+        .as_ref()
+        .map(|operation| operation.root_span().clone());
+    let result = install_client_inner(client_id, operation_span).await;
+    finish_business_operation(operation, &result);
+    result
+}
+
+async fn install_client_inner(
+    client_id: String,
+    operation_span: Option<telemetry::SpanContext>,
+) -> Result<InstallClientResult, String> {
     let dirs = agentdock_dirs()?;
     ensure_dirs(&dirs)?;
     let now = now_rfc3339();
@@ -3572,7 +3657,16 @@ async fn install_client(client_id: String) -> Result<InstallClientResult, String
     let detected_version = if spec.id == "antigravity" {
         version
     } else {
-        command_version(&launcher_path.display().to_string())
+        let launcher = launcher_path.display().to_string();
+        let command = command_version_command(&launcher);
+        let command_span = operation_span
+            .as_ref()
+            .and_then(|span| begin_command_span(span, &command));
+        let result = command_version_traced(&launcher, command_span.as_ref());
+        if let (Ok(_), Some(span)) = (&result, command_span.as_ref()) {
+            let _ = span.finish_ok();
+        }
+        result
             .ok()
             .filter(|value| !value.is_empty())
             .unwrap_or(version)
@@ -3626,6 +3720,19 @@ fn list_managed_clients() -> Result<Vec<ManagedClientRecord>, String> {
 
 #[tauri::command]
 fn uninstall_client(client_id: String) -> Result<OperationResult, String> {
+    let target_id = client_id.clone();
+    record_business_operation(
+        "agentdock.client.uninstall",
+        "Uninstall client",
+        "client",
+        "client",
+        &target_id,
+        "manual",
+        || uninstall_client_inner(client_id),
+    )
+}
+
+fn uninstall_client_inner(client_id: String) -> Result<OperationResult, String> {
     let dirs = agentdock_dirs()?;
     ensure_dirs(&dirs)?;
     let mut clients = list_managed_clients()?;
@@ -3637,7 +3744,9 @@ fn uninstall_client(client_id: String) -> Result<OperationResult, String> {
 
     let install_dir = PathBuf::from(&managed.install_dir);
     if install_dir.starts_with(&dirs.clients_dir) && install_dir.exists() {
-        fs::remove_dir_all(&install_dir).map_err(|err| format!("卸载客户端失败: {}", err))?;
+        record_local_action("remove_dir", &install_dir, || {
+            fs::remove_dir_all(&install_dir).map_err(|err| format!("卸载客户端失败: {}", err))
+        })?;
     }
     clients.retain(|client| client.id != client_id);
     write_json(&managed_clients_path(&dirs), &clients)?;
@@ -4104,7 +4213,7 @@ fn apply_provider_for_app(
 async fn run_diagnostics() -> Result<DiagnosticsReport, String> {
     let dirs = agentdock_dirs()?;
     ensure_dirs(&dirs)?;
-    let desktop = desktop_status()?;
+    let desktop = desktop_status("diagnostics")?;
     let mut checks = vec![diagnostic_check(
         "system-platform",
         "系统",
@@ -4432,6 +4541,23 @@ fn launch_client(
     working_directory: Option<String>,
     request_id: String,
 ) -> Result<LaunchClientResult, String> {
+    let target_id = client_id.clone();
+    record_business_operation(
+        "agentdock.client.launch",
+        "Launch client",
+        "client",
+        "client",
+        &target_id,
+        "manual",
+        || launch_client_inner(client_id, working_directory, request_id),
+    )
+}
+
+fn launch_client_inner(
+    client_id: String,
+    working_directory: Option<String>,
+    request_id: String,
+) -> Result<LaunchClientResult, String> {
     let dirs = agentdock_dirs()?;
     ensure_dirs(&dirs)?;
     validate_launch_request(&client_id, &request_id)?;
@@ -4559,10 +4685,25 @@ fn client_uses_working_directory(client_id: &str, executable: &Path) -> bool {
 
 #[cfg(not(target_os = "macos"))]
 fn launch_desktop_client(path: &Path) -> Result<(), String> {
-    Command::new(path)
-        .spawn()
+    let mut command = Command::new(path);
+    traced_spawn(&mut command)
         .map(|_| ())
         .map_err(|error| format!("无法启动 {}: {}", path.display(), error))
+}
+
+fn traced_spawn(command: &mut Command) -> Result<std::process::Child, std::io::Error> {
+    let span = begin_current_command_span(command);
+    let result = command.spawn();
+    match (&result, span.as_ref()) {
+        (Ok(_), Some(span)) => {
+            let _ = span.finish_ok();
+        }
+        (Err(error), Some(span)) => {
+            let _ = span.finish_error(&error.to_string());
+        }
+        _ => {}
+    }
+    result
 }
 
 #[cfg(target_os = "macos")]
@@ -4923,24 +5064,34 @@ fn launch_in_terminal(
             "Bypass",
             "-File",
         ];
-        let spawn_result = match settings.preferred_terminal.as_str() {
-            "cmd" => Command::new("cmd.exe")
-                .creation_flags(0x00000010)
-                .args(["/K", "powershell.exe"])
-                .args(powershell_args)
-                .arg(&launcher)
-                .spawn(),
-            "wt" if find_executable("wt").is_some() => Command::new("wt.exe")
-                .args(["powershell.exe"])
-                .args(powershell_args)
-                .arg(&launcher)
-                .spawn(),
-            _ => Command::new("powershell.exe")
-                .creation_flags(0x00000010)
-                .args(powershell_args)
-                .arg(&launcher)
-                .spawn(),
+        let mut command = match settings.preferred_terminal.as_str() {
+            "cmd" => {
+                let mut command = Command::new("cmd.exe");
+                command
+                    .creation_flags(0x00000010)
+                    .args(["/K", "powershell.exe"])
+                    .args(powershell_args)
+                    .arg(&launcher);
+                command
+            }
+            "wt" if find_executable("wt").is_some() => {
+                let mut command = Command::new("wt.exe");
+                command
+                    .args(["powershell.exe"])
+                    .args(powershell_args)
+                    .arg(&launcher);
+                command
+            }
+            _ => {
+                let mut command = Command::new("powershell.exe");
+                command
+                    .creation_flags(0x00000010)
+                    .args(powershell_args)
+                    .arg(&launcher);
+                command
+            }
         };
+        let spawn_result = traced_spawn(&mut command);
         spawn_result.map_err(|err| format!("打开终端失败: {}", err))?;
         return Ok(());
     }
@@ -5468,9 +5619,11 @@ fn find_scanned_skill(home: &Path, skill_id: &str) -> Result<SkillRecord, String
 fn preferred_skill_copy_source(skill: &SkillRecord) -> Result<PathBuf, String> {
     let mut installations = skill.installations.iter().collect::<Vec<_>>();
     installations.sort_by_key(|installation| {
+        let path = Path::new(&installation.path);
         (
+            !is_agents_shared_skill_path(path),
             installation.is_link,
-            skill_path_identity(Path::new(&installation.path)),
+            skill_path_identity(path),
         )
     });
     for installation in installations {
@@ -5483,6 +5636,10 @@ fn preferred_skill_copy_source(skill: &SkillRecord) -> Result<PathBuf, String> {
         }
     }
     Err("没有可用于复制的本地 Skill 安装".to_string())
+}
+
+fn is_agents_shared_skill_path(path: &Path) -> bool {
+    skill_path_identity(path).contains("/.agents/skills/")
 }
 
 fn copy_skill_entry(
@@ -6166,7 +6323,19 @@ fn skills_records_from_cli_items_for_source(
 
 #[tauri::command]
 async fn install_skill(input: SkillInstallInput) -> Result<SkillRecord, String> {
-    run_skill_write(move || install_skill_inner(input)).await
+    let target_id = input.id.clone();
+    run_skill_write(move || {
+        record_business_operation(
+            "agentdock.skill.install",
+            "Install Skill",
+            "skill",
+            "skill",
+            &target_id,
+            "manual",
+            || install_skill_inner(input),
+        )
+    })
+    .await
 }
 
 fn install_skill_inner(input: SkillInstallInput) -> Result<SkillRecord, String> {
@@ -6259,7 +6428,29 @@ async fn toggle_skill_app(
     app: String,
     enabled: bool,
 ) -> Result<SkillRecord, String> {
-    run_skill_write(move || toggle_skill_app_inner(skill_id, app, enabled)).await
+    let operation_name = if enabled {
+        "agentdock.skill.enable"
+    } else {
+        "agentdock.skill.disable"
+    };
+    let display_name = if enabled {
+        "Enable Skill"
+    } else {
+        "Disable Skill"
+    };
+    let target_id = skill_id.clone();
+    run_skill_write(move || {
+        record_business_operation(
+            operation_name,
+            display_name,
+            "skill",
+            "skill",
+            &target_id,
+            "manual",
+            || toggle_skill_app_inner(skill_id, app, enabled),
+        )
+    })
+    .await
 }
 
 fn toggle_skill_app_inner(
@@ -6296,7 +6487,19 @@ async fn enable_skill_apps(
     skill_id: String,
     apps: Vec<String>,
 ) -> Result<SkillEnableResult, String> {
-    run_skill_write(move || enable_skill_apps_inner(skill_id, apps)).await
+    let target_id = skill_id.clone();
+    run_skill_write(move || {
+        record_business_operation(
+            "agentdock.skill.enable",
+            "Enable Skill",
+            "skill",
+            "skill",
+            &target_id,
+            "manual",
+            || enable_skill_apps_inner(skill_id, apps),
+        )
+    })
+    .await
 }
 
 fn enable_skill_apps_inner(
@@ -6324,7 +6527,8 @@ fn enable_skill_apps_inner(
     let scoped_settings = skill_source_settings(&settings, source);
     let cwd = skills_cli_working_directory(&scoped_settings)?
         .ok_or_else(|| "Cannot resolve Skills CLI working directory".to_string())?;
-    let cli_attempt = skills_cli_enable_apps_command(&skill_id, &scoped_settings, &apps);
+    let installed_skill = find_scanned_skill(&home, &skill_id)?;
+    let cli_attempt = skills_cli_enable_apps_command(&installed_skill, &scoped_settings, &apps);
     enable_local_skill_target_at_home(&home, &skill_id, &apps, move || {
         let (command, _) = cli_attempt?;
         run_skills_cli(command, &cwd)?;
@@ -6347,10 +6551,16 @@ fn toggle_cli_skill_app(
         let cwd = skills_cli_working_directory(&scoped_settings)?
             .ok_or_else(|| "Cannot resolve Skills CLI working directory".to_string())?;
         let apps = vec![app.clone()];
-        run_skills_cli(
-            skills_cli_add_command(raw_skill_id, None, &scoped_settings, Some(apps.as_slice())),
-            &cwd,
-        )?;
+        let existing = list_skills_inner()?
+            .into_iter()
+            .find(|skill| {
+                skill.id == skill_id
+                    || split_sourced_skill_id(&skill.id).1 == raw_skill_id
+                    || skill.name == raw_skill_id
+            })
+            .ok_or_else(|| "未找到 Skill 安装记录".to_string())?;
+        let (command, _) = skills_cli_enable_apps_command(&existing, &scoped_settings, &apps)?;
+        run_skills_cli(command, &cwd)?;
         return Ok(SkillRecord {
             id: sourced_skill_id(source, &slugify(raw_skill_id)),
             name: raw_skill_id.to_string(),
@@ -6622,14 +6832,65 @@ fn validate_skill_installation_path(path: &Path, root: &Path) -> Result<(), Stri
     Ok(())
 }
 
+#[cfg(test)]
 fn remove_skill_installation_path(path: &Path) -> Result<(), String> {
     let metadata =
         fs::symlink_metadata(path).map_err(|_| "安装位置已变化，请刷新后重试".to_string())?;
     if metadata.file_type().is_symlink() {
-        remove_skill_link(path)
-    } else {
-        fs::remove_dir_all(path).map_err(|err| format!("卸载 Skill 失败: {}", err))
+        return record_local_action("remove_link", path, || remove_skill_link(path));
     }
+    record_local_action("remove_dir", path, || {
+        fs::remove_dir_all(path).map_err(|err| format!("卸载 Skill 失败: {}", err))
+    })
+}
+
+fn remove_skill_installation_path_with_command(path: &Path) -> Result<(), String> {
+    let metadata =
+        fs::symlink_metadata(path).map_err(|_| "安装位置已变化，请刷新后重试".to_string())?;
+    let mut command = skill_remove_path_command(path, metadata.file_type().is_symlink());
+    let span = begin_current_command_span(&command);
+    let output = command_output_with_timeout_message_traced(
+        hidden_command(&mut command),
+        std::time::Duration::from_secs(30),
+        "删除 Skill 安装位置超时",
+        span.as_ref(),
+    )?;
+    if !output.status.success() {
+        if let Some(span) = span.as_ref() {
+            let _ = span.finish_error(&output.status.to_string());
+        }
+        return Err(format!(
+            "卸载 Skill 失败: {}",
+            command_failure_detail(&output)
+        ));
+    }
+    if let Some(span) = span.as_ref() {
+        let _ = span.finish_ok();
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn skill_remove_path_command(path: &Path, _is_link: bool) -> Command {
+    let mut command = Command::new("powershell.exe");
+    command.args([
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "Remove-Item",
+        "-LiteralPath",
+    ]);
+    command.arg(path);
+    command.args(["-Recurse", "-Force"]);
+    command
+}
+
+#[cfg(not(windows))]
+fn skill_remove_path_command(path: &Path, _is_link: bool) -> Command {
+    let mut command = Command::new("rm");
+    command.arg("-rf").arg("--").arg(path);
+    command
 }
 
 fn normalized_existing_path(path: &Path) -> Option<PathBuf> {
@@ -6708,7 +6969,60 @@ fn remove_global_skill_lock_entry(home: &Path, skill_name: &str) -> Result<(), S
     write_json(&path, &value)
 }
 
+#[allow(unreachable_code)]
 fn uninstall_skill_installation_at_home(
+    home: &Path,
+    skill_id: &str,
+    installation_id: &str,
+) -> Result<SkillRecord, String> {
+    return uninstall_skill_installation_at_home_inner(home, skill_id, installation_id);
+    record_business_operation(
+        "agentdock.skill.uninstall",
+        "Uninstall Skill",
+        "skill",
+        "skill",
+        skill_id,
+        "manual",
+        || {
+            let (skill, installation, root) =
+                resolve_skill_installation(home, skill_id, installation_id)?;
+            let path = PathBuf::from(&installation.path);
+            validate_skill_installation_path(&path, &root.path)?;
+            let dependents = if installation.is_link {
+                Vec::new()
+            } else {
+                dependent_skill_link_paths(&skill, &path)
+            };
+            detach_dependent_skill_links(&path, &dependents)?;
+            remove_skill_installation_path_with_command(&path)?;
+
+            if let Some(remaining) = scan_global_skill_inventory(home)?
+                .into_iter()
+                .find(|record| record.id == skill.id)
+            {
+                if remaining
+                    .installations
+                    .iter()
+                    .any(|item| item.id == installation_id)
+                {
+                    return Err("卸载后仍检测到该安装位置".to_string());
+                }
+                return Ok(remaining);
+            }
+
+            remove_global_skill_lock_entry(home, &skill.name)?;
+            Ok(SkillRecord {
+                installed: false,
+                apps: Vec::new(),
+                installations: Vec::new(),
+                updated_at: now_rfc3339(),
+                ..skill
+            })
+        },
+    )
+}
+
+fn uninstall_skill_installation_at_home_inner(
     home: &Path,
     skill_id: &str,
     installation_id: &str,
@@ -6721,9 +7035,48 @@ fn uninstall_skill_installation_at_home(
     } else {
         dependent_skill_link_paths(&skill, &path)
     };
+    if let Some(result) = uninstall_skill_installation_with_skills_cli(home, &skill, &installation)?
+    {
+        return Ok(result);
+    }
     detach_dependent_skill_links(&path, &dependents)?;
-    remove_skill_installation_path(&path)?;
+    remove_skill_installation_path_with_command(&path)?;
 
+    skill_record_after_installation_removed(home, skill, installation_id)
+}
+
+fn uninstall_skill_installation_with_skills_cli(
+    home: &Path,
+    skill: &SkillRecord,
+    installation: &SkillInstallation,
+) -> Result<Option<SkillRecord>, String> {
+    if current_operation_span().is_none() {
+        return Ok(None);
+    }
+    let apps = skills_cli_supported_apps(&installation.apps);
+    if apps.is_empty() {
+        return Ok(None);
+    }
+    let scoped_settings = skill_source_settings(&AppSettings::default(), &skill.source);
+    let Some(cwd) = skills_cli_working_directory_at_home(home, &scoped_settings)? else {
+        return Ok(None);
+    };
+    let target = skills_cli_remove_target(skill);
+    let remove_apps = (!is_agents_shared_skill_path(Path::new(&installation.path)))
+        .then_some(apps.as_slice());
+    run_skills_cli_allowing_missing_skill(
+        skills_cli_remove_command(&target, &scoped_settings, remove_apps),
+        &cwd,
+    )?;
+    let result = skill_record_after_installation_removed(home, skill.clone(), &installation.id)?;
+    Ok(Some(result))
+}
+
+fn skill_record_after_installation_removed(
+    home: &Path,
+    skill: SkillRecord,
+    installation_id: &str,
+) -> Result<SkillRecord, String> {
     if let Some(remaining) = scan_global_skill_inventory(home)?
         .into_iter()
         .find(|record| record.id == skill.id)
@@ -6807,10 +7160,27 @@ async fn inspect_skill_uninstall(
 }
 
 #[tauri::command]
+#[allow(unreachable_code)]
 async fn uninstall_skill_installation(
     skill_id: String,
     installation_id: String,
 ) -> Result<SkillRecord, String> {
+    let target_id = skill_id.clone();
+    return run_skill_write(move || {
+        record_business_operation(
+            "agentdock.skill.uninstall",
+            "Uninstall Skill",
+            "skill",
+            "skill",
+            &target_id,
+            "manual",
+            || {
+                let home = dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?;
+                uninstall_skill_installation_at_home(&home, &skill_id, &installation_id)
+            },
+        )
+    })
+    .await;
     run_skill_write(move || {
         let home = dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?;
         uninstall_skill_installation_at_home(&home, &skill_id, &installation_id)
@@ -6820,16 +7190,85 @@ async fn uninstall_skill_installation(
 
 #[tauri::command]
 async fn uninstall_skill(skill_id: String) -> Result<SkillRecord, String> {
-    run_skill_write(move || uninstall_skill_inner(skill_id)).await
+    let target_id = skill_id.clone();
+    run_skill_write(move || {
+        record_business_operation(
+            "agentdock.skill.uninstall",
+            "Uninstall Skill",
+            "skill",
+            "skill",
+            &target_id,
+            "manual",
+            || uninstall_skill_inner(skill_id),
+        )
+    })
+    .await
 }
 
 fn uninstall_skill_inner(skill_id: String) -> Result<SkillRecord, String> {
     let home = dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?;
-    let skill = scan_global_skill_inventory(&home)?
+    let settings = agentdock_dirs()
+        .and_then(|dirs| read_app_settings(&dirs))
+        .unwrap_or_else(|_| AppSettings::default());
+    uninstall_skill_inner_at_home(&home, &skill_id, &settings)
+}
+
+fn uninstall_skill_inner_at_home(
+    home: &Path,
+    skill_id: &str,
+    settings: &AppSettings,
+) -> Result<SkillRecord, String> {
+    let skill = scan_global_skill_inventory(home)?
         .into_iter()
-        .find(|skill| skill.id == skill_id)
+        .find(|skill| {
+            skill.id == skill_id
+                || split_sourced_skill_id(&skill.id).1 == skill_id
+                || skill.name == skill_id
+        })
         .ok_or_else(|| "Skill 安装状态已变化，请刷新后重试".to_string())?;
-    let roots = global_skill_roots(&home);
+    if let Some(removed) = uninstall_skill_with_skills_cli(home, &skill, settings)? {
+        return Ok(removed);
+    }
+    uninstall_skill_locally_at_home(home, skill)
+}
+
+fn uninstall_skill_with_skills_cli(
+    home: &Path,
+    skill: &SkillRecord,
+    settings: &AppSettings,
+) -> Result<Option<SkillRecord>, String> {
+    let scoped_settings = skill_source_settings(settings, &skill.source);
+    let Some(cwd) = skills_cli_working_directory_at_home(home, &scoped_settings)? else {
+        return Ok(None);
+    };
+    let target = skills_cli_remove_target(skill);
+    let apps = skills_cli_supported_apps(&skill.apps);
+    let command = skills_cli_remove_command(
+        &target,
+        &scoped_settings,
+        (!apps.is_empty()).then_some(apps.as_slice()),
+    );
+    if let Err(error) = run_skills_cli_allowing_missing_skill(command, &cwd) {
+        if current_operation_span().is_some() {
+            return Err(error);
+        }
+        return Ok(None);
+    }
+    if scan_global_skill_inventory(home)?
+        .iter()
+        .any(|record| record.id == skill.id)
+    {
+        if current_operation_span().is_some() {
+            return Err("Skills CLI 执行完成后仍检测到该 Skill 的安装位置".to_string());
+        }
+        return Ok(None);
+    }
+    remove_global_skill_lock_entry(home, &skill.name)?;
+    Ok(Some(uninstalled_skill_record(skill.clone())))
+}
+
+fn uninstall_skill_locally_at_home(home: &Path, skill: SkillRecord) -> Result<SkillRecord, String> {
+    let roots = global_skill_roots(home);
     let mut resolved = Vec::new();
     for installation in &skill.installations {
         let path = PathBuf::from(&installation.path);
@@ -6842,22 +7281,26 @@ fn uninstall_skill_inner(skill_id: String) -> Result<SkillRecord, String> {
     }
     resolved.sort_by_key(|(is_link, _)| !*is_link);
     for (_, path) in resolved {
-        remove_skill_installation_path(&path)?;
+        remove_skill_installation_path_with_command(&path)?;
     }
-    if scan_global_skill_inventory(&home)?
+    if scan_global_skill_inventory(home)?
         .iter()
         .any(|record| record.id == skill.id)
     {
         return Err("卸载后仍检测到该 Skill 的安装位置".to_string());
     }
-    remove_global_skill_lock_entry(&home, &skill.name)?;
-    Ok(SkillRecord {
+    remove_global_skill_lock_entry(home, &skill.name)?;
+    Ok(uninstalled_skill_record(skill))
+}
+
+fn uninstalled_skill_record(skill: SkillRecord) -> SkillRecord {
+    SkillRecord {
         installed: false,
         apps: Vec::new(),
         installations: Vec::new(),
         updated_at: now_rfc3339(),
         ..skill
-    })
+    }
 }
 
 fn uninstall_legacy_skill(dirs: &AgentDockDirs, skill_id: String) -> Result<SkillRecord, String> {
@@ -6887,7 +7330,18 @@ fn uninstall_legacy_skill(dirs: &AgentDockDirs, skill_id: String) -> Result<Skil
 
 #[tauri::command]
 async fn sync_skills() -> Result<SyncResult, String> {
-    run_skill_write(sync_skills_inner).await
+    run_skill_write(|| {
+        record_business_operation(
+            "agentdock.skills.sync",
+            "Sync Skills",
+            "skill",
+            "skills",
+            "all",
+            "manual",
+            sync_skills_inner,
+        )
+    })
+    .await
 }
 
 fn sync_skills_inner() -> Result<SyncResult, String> {
@@ -7001,6 +7455,28 @@ fn skills_cli_list_global_command() -> SkillsCliCommand {
     }
 }
 
+fn skills_cli_add_package_for_installed_skill(skill: &SkillRecord) -> String {
+    skill
+        .source_url
+        .as_deref()
+        .and_then(github_package_from_url)
+        .unwrap_or_else(|| skills_cli_remove_target(skill))
+}
+
+fn github_package_from_url(value: &str) -> Option<String> {
+    let parsed = reqwest::Url::parse(value).ok()?;
+    if parsed.host_str() != Some("github.com") {
+        return None;
+    }
+    let mut segments = parsed.path_segments()?;
+    let owner = segments.next()?.trim();
+    let repo = segments.next()?.trim().trim_end_matches(".git");
+    if owner.is_empty() || repo.is_empty() {
+        return None;
+    }
+    Some(format!("{owner}/{repo}"))
+}
+
 fn skills_cli_add_command(
     package: &str,
     skill_id: Option<&str>,
@@ -7037,7 +7513,7 @@ fn skills_cli_add_command(
 }
 
 fn skills_cli_enable_apps_command(
-    skill_id: &str,
+    skill: &SkillRecord,
     settings: &AppSettings,
     apps: &[String],
 ) -> Result<(SkillsCliCommand, Vec<String>), String> {
@@ -7045,8 +7521,12 @@ fn skills_cli_enable_apps_command(
     if installed_apps.is_empty() {
         return Err("所选客户端均不受 Skills CLI 支持".to_string());
     }
-    let (_, raw_skill_id) = split_sourced_skill_id(skill_id);
-    let command = skills_cli_add_command(raw_skill_id, None, settings, Some(&installed_apps));
+    let command = skills_cli_add_command(
+        &skills_cli_add_package_for_installed_skill(skill),
+        Some(&skills_cli_remove_target(skill)),
+        settings,
+        Some(&installed_apps),
+    );
     Ok((command, installed_apps))
 }
 
@@ -7139,12 +7619,32 @@ fn run_skills_cli(spec: SkillsCliCommand, cwd: &Path) -> Result<String, String> 
         }
     }
     command.current_dir(cwd);
-    let output = command_output_with_timeout_message(
+    let command_args = std::iter::once(executable.display().to_string())
+        .chain(spec.args.iter().cloned())
+        .collect::<Vec<_>>();
+    let command_span = current_operation_span().and_then(|span| {
+        span.begin_child(
+            "agentdock.command",
+            vec![
+                telemetry::OtlpKeyValue {
+                    key: "process.command_args".to_string(),
+                    value: telemetry::OtlpAnyValue::StringArray(command_args.clone()),
+                },
+                telemetry::OtlpKeyValue::string("process.cwd", cwd.display().to_string()),
+            ],
+        )
+        .ok()
+    });
+    let output = command_output_with_timeout_message_traced(
         &mut command,
         SKILLS_CLI_TIMEOUT,
         SKILLS_CLI_TIMEOUT_MESSAGE,
+        command_span.as_ref(),
     )
     .map_err(|err| {
+        if let Some(span) = command_span.as_ref() {
+            let _ = span.finish_error(&err);
+        }
         if err == SKILLS_CLI_TIMEOUT_MESSAGE {
             err
         } else {
@@ -7152,10 +7652,16 @@ fn run_skills_cli(spec: SkillsCliCommand, cwd: &Path) -> Result<String, String> 
         }
     })?;
     if !output.status.success() {
+        if let Some(span) = command_span.as_ref() {
+            let _ = span.finish_error(&output.status.to_string());
+        }
         return Err(format!(
             "Skills CLI 执行失败: {}",
             command_failure_detail(&output)
         ));
+    }
+    if let Some(span) = command_span.as_ref() {
+        let _ = span.finish_ok();
     }
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
@@ -7831,6 +8337,10 @@ fn mcp_stdio_command(
 
 fn command_search_paths() -> Vec<PathBuf> {
     let mut paths = Vec::new();
+    #[cfg(test)]
+    if let Some(test_paths) = env::var_os("AGENTDOCK_TEST_COMMAND_PATH") {
+        paths.extend(env::split_paths(&test_paths));
+    }
     if let Some(home) = dirs_home() {
         paths.extend([
             home.join(".local/bin"),
@@ -10082,6 +10592,9 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             get_desktop_status,
+            list_operation_records,
+            get_operation_record,
+            get_operation_output,
             check_app_update,
             install_app_update,
             get_app_settings,
@@ -10257,6 +10770,205 @@ fn agentdock_dirs() -> Result<AgentDockDirs, String> {
         backups_dir,
         managed_configs_dir,
     })
+}
+
+fn telemetry_store(dirs: &AgentDockDirs) -> Result<Arc<telemetry::TelemetryStore>, String> {
+    if let Some(store) = TELEMETRY_STORE.get() {
+        return Ok(Arc::clone(store));
+    }
+    let store = telemetry::TelemetryStore::open(&dirs.data_dir.join("telemetry-v1.sqlite3"))?;
+    let _ = TELEMETRY_STORE.set(Arc::clone(&store));
+    Ok(TELEMETRY_STORE.get().cloned().unwrap_or(store))
+}
+
+fn normalize_telemetry_trigger(trigger: Option<&str>) -> &'static str {
+    match trigger {
+        Some("manual") => "manual",
+        Some("automatic") => "automatic",
+        Some("post_operation") => "post_operation",
+        Some("diagnostics") => "diagnostics",
+        _ => "startup",
+    }
+}
+
+fn record_business_operation<T, F>(
+    name: &str,
+    display_name: &str,
+    category: &str,
+    target_type: &str,
+    target_id: &str,
+    trigger: &str,
+    action: F,
+) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String>,
+{
+    let operation = begin_business_operation(
+        name,
+        display_name,
+        category,
+        target_type,
+        target_id,
+        trigger,
+    );
+    let result = if let Some(operation) = operation.as_ref() {
+        with_current_operation_span(operation.root_span().clone(), action)
+    } else {
+        action()
+    };
+    finish_business_operation(operation, &result);
+    result
+}
+
+fn begin_business_operation(
+    name: &str,
+    display_name: &str,
+    category: &str,
+    target_type: &str,
+    target_id: &str,
+    trigger: &str,
+) -> Option<telemetry::OperationContext> {
+    agentdock_dirs()
+        .and_then(|dirs| telemetry_store(&dirs))
+        .and_then(|store| {
+            store.begin_operation(telemetry::OperationStart {
+                name,
+                display_name,
+                category,
+                target_type,
+                target_id,
+                trigger,
+            })
+        })
+        .ok()
+}
+
+fn finish_business_operation<T>(
+    operation: Option<telemetry::OperationContext>,
+    result: &Result<T, String>,
+) {
+    if let Some(operation) = operation {
+        match result {
+            Ok(_) => {
+                let _ = operation.finish_ok();
+            }
+            Err(error) => {
+                let _ = operation.finish_error(error);
+            }
+        }
+    }
+}
+
+fn current_operation_span() -> Option<telemetry::SpanContext> {
+    CURRENT_OPERATION_SPAN.with(|current| current.borrow().clone())
+}
+
+fn command_attribute_args(command: &Command) -> Vec<String> {
+    std::iter::once(command.get_program().to_string_lossy().to_string())
+        .chain(
+            command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().to_string()),
+        )
+        .collect()
+}
+
+fn command_attribute_cwd(command: &Command) -> String {
+    command
+        .get_current_dir()
+        .map(|path| path.display().to_string())
+        .or_else(|| {
+            env::current_dir()
+                .ok()
+                .map(|path| path.display().to_string())
+        })
+        .unwrap_or_default()
+}
+
+fn begin_command_span(
+    parent: &telemetry::SpanContext,
+    command: &Command,
+) -> Option<telemetry::SpanContext> {
+    parent
+        .begin_child(
+            "agentdock.command",
+            vec![
+                telemetry::OtlpKeyValue {
+                    key: "process.command_args".to_string(),
+                    value: telemetry::OtlpAnyValue::StringArray(command_attribute_args(command)),
+                },
+                telemetry::OtlpKeyValue::string("process.cwd", command_attribute_cwd(command)),
+            ],
+        )
+        .ok()
+}
+
+fn begin_current_command_span(command: &Command) -> Option<telemetry::SpanContext> {
+    current_operation_span().and_then(|span| begin_command_span(&span, command))
+}
+
+fn record_local_action<T, F>(kind: &str, path: &Path, action: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String>,
+{
+    let path_text = path.display().to_string();
+    let span = current_operation_span().and_then(|span| {
+        span.begin_child(
+            "agentdock.local_action",
+            vec![
+                telemetry::OtlpKeyValue::string("agentdock.local_action.kind", kind),
+                telemetry::OtlpKeyValue::string("file.path", &path_text),
+            ],
+        )
+        .ok()
+    });
+    let result = action();
+    if let Some(span) = span {
+        let _ = span.append_log(telemetry::LogInput::info(
+            "agentdock.local_action",
+            telemetry::OtlpAnyValue::String(match &result {
+                Ok(_) => format!("{kind} {path_text}"),
+                Err(error) => format!("{kind} {path_text}: {error}"),
+            }),
+            vec![
+                telemetry::OtlpKeyValue::string("agentdock.local_action.kind", kind),
+                telemetry::OtlpKeyValue::string("file.path", path_text),
+                telemetry::OtlpKeyValue::string(
+                    "agentdock.local_action.result",
+                    if result.is_ok() { "success" } else { "error" },
+                ),
+            ],
+        ));
+        match &result {
+            Ok(_) => {
+                let _ = span.finish_ok();
+            }
+            Err(error) => {
+                let _ = span.finish_error(error);
+            }
+        }
+    }
+    result
+}
+
+fn with_current_operation_span<T, F>(span: telemetry::SpanContext, action: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    CURRENT_OPERATION_SPAN.with(|current| {
+        let previous = current.replace(Some(span));
+        let result = action();
+        current.replace(previous);
+        result
+    })
+}
+
+#[cfg(test)]
+fn with_current_operation_span_for_test<T, F>(span: telemetry::SpanContext, action: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    with_current_operation_span(span, action)
 }
 
 fn agentdock_data_dir() -> Result<PathBuf, String> {
@@ -10555,6 +11267,14 @@ fn migrate_installed_skill_dirs(
 }
 
 fn skills_cli_working_directory(settings: &AppSettings) -> Result<Option<PathBuf>, String> {
+    let home = dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?;
+    skills_cli_working_directory_at_home(&home, settings)
+}
+
+fn skills_cli_working_directory_at_home(
+    home: &Path,
+    settings: &AppSettings,
+) -> Result<Option<PathBuf>, String> {
     if matches!(
         settings.skill_storage_location.as_str(),
         "agentdock" | "unified"
@@ -10563,9 +11283,7 @@ fn skills_cli_working_directory(settings: &AppSettings) -> Result<Option<PathBuf
         return skills_storage_root_dir(&dirs, settings).map(Some);
     }
     if settings.skill_storage_location == "global" {
-        return dirs_home()
-            .map(Some)
-            .ok_or_else(|| "无法确定用户主目录".to_string());
+        return Ok(Some(home.to_path_buf()));
     }
     if settings.skill_storage_location != "project" {
         return Ok(None);
@@ -10954,20 +11672,47 @@ fn detect_clients_with_search_paths(
     managed: &[ManagedClientRecord],
     search_paths: &[PathBuf],
 ) -> Vec<ClientStatus> {
+    detect_clients_with_search_paths_traced(managed, search_paths, None)
+}
+
+fn detect_clients_with_search_paths_traced(
+    managed: &[ManagedClientRecord],
+    search_paths: &[PathBuf],
+    operation: Option<&telemetry::OperationContext>,
+) -> Vec<ClientStatus> {
     std::thread::scope(|scope| {
         let handles = client_detection_specs()
             .into_iter()
             .map(|(id, name, executable_names)| {
                 let client_paths = client_command_search_paths_from_base(id, search_paths);
                 scope.spawn(move || {
-                    detect_client_with_search_paths(
+                    let span = operation.and_then(|operation| {
+                        operation
+                            .begin_span(
+                                "agentdock.client.detect",
+                                vec![
+                                    telemetry::OtlpKeyValue::string(
+                                        "agentdock.target.type",
+                                        "client",
+                                    ),
+                                    telemetry::OtlpKeyValue::string("agentdock.target.id", id),
+                                ],
+                            )
+                            .ok()
+                    });
+                    let status = detect_client_with_search_paths_traced(
                         id,
                         name,
                         executable_names,
                         client_user_config_dir(id),
                         managed,
                         &client_paths,
-                    )
+                        span.as_ref(),
+                    );
+                    if let Some(span) = span {
+                        let _ = span.finish_ok();
+                    }
+                    status
                 })
             })
             .collect::<Vec<_>>();
@@ -11001,7 +11746,15 @@ fn client_detection_cache() -> &'static Mutex<Option<(Instant, Vec<ClientStatus>
 }
 
 fn refresh_client_detection() -> Vec<ClientStatus> {
-    let clients = detect_clients();
+    refresh_client_detection_traced(None)
+}
+
+fn refresh_client_detection_traced(
+    operation: Option<&telemetry::OperationContext>,
+) -> Vec<ClientStatus> {
+    let managed = list_managed_clients().unwrap_or_default();
+    let search_paths = command_search_paths();
+    let clients = detect_clients_with_search_paths_traced(&managed, &search_paths, operation);
     if let Ok(mut cache) = client_detection_cache().lock() {
         *cache = Some((Instant::now(), clients.clone()));
     }
@@ -11060,11 +11813,31 @@ fn detect_client_with_search_paths(
     managed_clients: &[ManagedClientRecord],
     search_paths: &[PathBuf],
 ) -> ClientStatus {
+    detect_client_with_search_paths_traced(
+        id,
+        name,
+        executable_names,
+        user_config_dir,
+        managed_clients,
+        search_paths,
+        None,
+    )
+}
+
+fn detect_client_with_search_paths_traced(
+    id: &str,
+    name: &str,
+    executable_names: &[&str],
+    user_config_dir: Option<PathBuf>,
+    managed_clients: &[ManagedClientRecord],
+    search_paths: &[PathBuf],
+    span: Option<&telemetry::SpanContext>,
+) -> ClientStatus {
     let managed = managed_clients
         .iter()
         .find(|client| client.id == id && client.installed && managed_client_is_runnable(client));
     let (external_executable, external_version) =
-        detect_external_client_with_search_paths(id, executable_names, search_paths);
+        detect_external_client_with_search_paths(id, executable_names, search_paths, span);
     let executable = managed
         .map(|client| client.launcher_path.clone())
         .or(external_executable);
@@ -11098,15 +11871,23 @@ fn detect_external_client_with_search_paths(
     _id: &str,
     executable_names: &[&str],
     search_paths: &[PathBuf],
+    span: Option<&telemetry::SpanContext>,
 ) -> (Option<String>, Option<String>) {
     if let Some(path) = executable_names
         .iter()
         .find_map(|name| find_executable_in_paths(name, &search_paths))
     {
         let executable = path.display().to_string();
-        let version = command_version(&executable)
+        let command_span = span.and_then(|span| {
+            let command = command_version_command(&executable);
+            begin_command_span(span, &command)
+        });
+        let version = command_version_traced(&executable, command_span.as_ref())
             .ok()
             .filter(|value| !value.trim().is_empty());
+        if let (Some(_), Some(span)) = (&version, command_span.as_ref()) {
+            let _ = span.finish_ok();
+        }
         return (Some(executable), version);
     }
 
@@ -11224,8 +12005,12 @@ fn executable_candidates(name: &str) -> Vec<OsString> {
 }
 
 fn command_version(executable: &str) -> Result<String, String> {
+    command_version_traced(executable, None)
+}
+
+fn command_version_command(executable: &str) -> Command {
     #[cfg(windows)]
-    let mut command = if executable.to_ascii_lowercase().ends_with(".cmd")
+    return if executable.to_ascii_lowercase().ends_with(".cmd")
         || executable.to_ascii_lowercase().ends_with(".bat")
     {
         let mut command = Command::new("cmd.exe");
@@ -11236,12 +12021,20 @@ fn command_version(executable: &str) -> Result<String, String> {
         command.arg("--version");
         command
     };
+
     #[cfg(not(windows))]
-    let mut command = {
+    {
         let mut command = Command::new(executable);
         command.arg("--version");
         command
-    };
+    }
+}
+
+fn command_version_traced(
+    executable: &str,
+    span: Option<&telemetry::SpanContext>,
+) -> Result<String, String> {
+    let mut command = command_version_command(executable);
     let mut search_paths = command_search_paths();
     if let Some(parent) = Path::new(executable).parent() {
         search_paths.insert(0, parent.to_path_buf());
@@ -11249,7 +12042,8 @@ fn command_version(executable: &str) -> Result<String, String> {
     if let Ok(path) = env::join_paths(search_paths) {
         command.env("PATH", path);
     }
-    let output = command_output_with_timeout(&mut command, std::time::Duration::from_secs(2))?;
+    let output =
+        command_output_with_timeout_traced(&mut command, std::time::Duration::from_secs(2), span)?;
 
     if !output.status.success() {
         let detail = first_line(String::from_utf8_lossy(&output.stderr).trim());
@@ -11318,6 +12112,56 @@ fn command_output_with_timeout_message(
             None => std::thread::sleep(std::time::Duration::from_millis(20)),
         }
     }
+}
+
+fn command_output_with_timeout_traced(
+    command: &mut Command,
+    timeout: std::time::Duration,
+    span: Option<&telemetry::SpanContext>,
+) -> Result<std::process::Output, String> {
+    command_output_with_timeout_message_traced(
+        command,
+        timeout,
+        "璇诲彇瀹㈡埛绔増鏈彿瓒呮椂",
+        span,
+    )
+}
+
+fn command_output_with_timeout_message_traced(
+    command: &mut Command,
+    timeout: std::time::Duration,
+    timeout_message: &str,
+    span: Option<&telemetry::SpanContext>,
+) -> Result<std::process::Output, String> {
+    if let Some(span) = span {
+        let args = std::iter::once(command.get_program().to_string_lossy().to_string())
+            .chain(
+                command
+                    .get_args()
+                    .map(|arg| arg.to_string_lossy().to_string()),
+            )
+            .collect::<Vec<_>>();
+        let _ = span.append_log(telemetry::LogInput::info(
+            "agentdock.command.start",
+            telemetry::OtlpAnyValue::String(args.join(" ")),
+            vec![telemetry::OtlpKeyValue {
+                key: "process.command_args".to_string(),
+                value: telemetry::OtlpAnyValue::StringArray(args),
+            }],
+        ));
+    }
+    let result = command_output_with_timeout_message(command, timeout, timeout_message);
+    match (&result, span) {
+        (Ok(output), Some(span)) => {
+            let _ = span.append_command_output(telemetry::CommandStream::Stdout, &output.stdout);
+            let _ = span.append_command_output(telemetry::CommandStream::Stderr, &output.stderr);
+        }
+        (Err(error), Some(span)) => {
+            let _ = span.finish_error(error);
+        }
+        _ => {}
+    }
+    result
 }
 
 fn read_command_pipe<R>(mut pipe: R) -> std::thread::JoinHandle<Result<Vec<u8>, String>>
@@ -13822,6 +14666,47 @@ mod tests {
     }
 
     #[test]
+    fn skill_copy_source_prefers_agents_shared_directory() {
+        let root = skill_inventory_test_root("copy-source-agents");
+        let codex = root.join(".codex/skills/review");
+        let agents = root.join(".agents/skills/review");
+        write_test_skill(&codex, "review");
+        write_test_skill(&agents, "review");
+        let skill = SkillRecord {
+            id: "global::review".to_string(),
+            name: "review".to_string(),
+            description: String::new(),
+            source: "global".to_string(),
+            installed: true,
+            apps: vec!["codex".to_string()],
+            updated_at: now_rfc3339(),
+            installations: vec![
+                SkillInstallation {
+                    id: "codex".to_string(),
+                    path: codex.display().to_string(),
+                    apps: vec!["codex".to_string()],
+                    is_link: false,
+                    link_target: None,
+                },
+                SkillInstallation {
+                    id: "agents".to_string(),
+                    path: agents.display().to_string(),
+                    apps: vec!["codex".to_string(), "claude-code".to_string()],
+                    is_link: false,
+                    link_target: None,
+                },
+            ],
+            source_url: None,
+        };
+
+        assert_eq!(
+            skill_path_identity(&preferred_skill_copy_source(&skill).unwrap()),
+            skill_path_identity(&agents)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn skill_copy_preserves_nested_files() {
         let root = skill_inventory_test_root("copy-nested");
         let source = root.join("source");
@@ -14067,6 +14952,433 @@ mod tests {
     }
 
     #[test]
+    fn local_skill_uninstall_records_raw_remove_action_path() {
+        let root = skill_inventory_test_root("remove-telemetry");
+        let codex = root.join(".codex/skills/demo");
+        write_test_skill(&codex, "demo");
+        let telemetry_path = root.join("telemetry.sqlite3");
+        let store = telemetry::TelemetryStore::open(&telemetry_path).unwrap();
+        let operation = store
+            .begin_operation(telemetry::OperationStart {
+                name: "agentdock.skill.uninstall",
+                display_name: "Uninstall Skill",
+                category: "skill",
+                target_type: "skill",
+                target_id: "demo",
+                trigger: "manual",
+            })
+            .unwrap();
+
+        with_current_operation_span_for_test(operation.root_span().clone(), || {
+            remove_skill_installation_path(&codex)
+        })
+        .unwrap();
+        operation.finish_ok().unwrap();
+
+        let summary = store.latest_operation().unwrap().unwrap();
+        let detail = store.operation_detail(&summary.trace_id).unwrap();
+        let action_span = detail
+            .spans
+            .iter()
+            .find(|span| span.name == "agentdock.local_action")
+            .expect("local remove action should be recorded");
+        assert!(action_span.attributes.iter().any(|attribute| {
+            attribute.key == "file.path"
+                && attribute.value == telemetry::OtlpAnyValue::String(codex.display().to_string())
+        }));
+        assert!(action_span.attributes.iter().any(|attribute| {
+            attribute.key == "agentdock.local_action.kind"
+                && attribute.value == telemetry::OtlpAnyValue::String("remove_dir".to_string())
+        }));
+
+        drop(operation);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_uninstall_prefers_skills_cli_remove_before_local_delete() {
+        let _guard = TEST_COMMAND_PATH_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap();
+        let root = skill_inventory_test_root("remove-cli-first");
+        let codex = root.join(".codex/skills/demo");
+        write_test_skill(&codex, "demo");
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let log_path = root.join("cli.log");
+        #[cfg(windows)]
+        fs::write(
+            bin.join("npx.cmd"),
+            format!(
+                "@echo off\r\necho %* > \"{}\"\r\nrmdir /S /Q \"{}\"\r\necho removed\r\n",
+                log_path.display(),
+                codex.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let executable = bin.join("npx");
+            fs::write(
+                &executable,
+                format!(
+                    "#!/bin/sh\necho \"$@\" > '{}'\nrm -rf '{}'\necho removed\n",
+                    log_path.display(),
+                    codex.display()
+                ),
+            )
+            .unwrap();
+            let mut permissions = fs::metadata(&executable).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&executable, permissions).unwrap();
+        }
+        let old_path = env::var_os("PATH");
+        let old_nvm_symlink = env::var_os("NVM_SYMLINK");
+        let old_test_command_path = env::var_os("AGENTDOCK_TEST_COMMAND_PATH");
+        let mut paths = vec![bin.clone()];
+        if let Some(old_path) = old_path.as_ref() {
+            paths.extend(env::split_paths(old_path));
+        }
+        env::set_var("PATH", env::join_paths(paths).unwrap());
+        env::set_var("NVM_SYMLINK", &bin);
+        env::set_var("AGENTDOCK_TEST_COMMAND_PATH", &bin);
+
+        let telemetry_path = root.join("telemetry.sqlite3");
+        let store = telemetry::TelemetryStore::open(&telemetry_path).unwrap();
+        let operation = store
+            .begin_operation(telemetry::OperationStart {
+                name: "agentdock.skill.uninstall",
+                display_name: "Uninstall Skill",
+                category: "skill",
+                target_type: "skill",
+                target_id: "demo",
+                trigger: "manual",
+            })
+            .unwrap();
+
+        let result = with_current_operation_span_for_test(operation.root_span().clone(), || {
+            uninstall_skill_inner_at_home(&root, "demo", &AppSettings::default())
+        })
+        .unwrap();
+        operation.finish_ok().unwrap();
+
+        if let Some(old_path) = old_path {
+            env::set_var("PATH", old_path);
+        } else {
+            env::remove_var("PATH");
+        }
+        if let Some(old_nvm_symlink) = old_nvm_symlink {
+            env::set_var("NVM_SYMLINK", old_nvm_symlink);
+        } else {
+            env::remove_var("NVM_SYMLINK");
+        }
+        if let Some(old_test_command_path) = old_test_command_path {
+            env::set_var("AGENTDOCK_TEST_COMMAND_PATH", old_test_command_path);
+        } else {
+            env::remove_var("AGENTDOCK_TEST_COMMAND_PATH");
+        }
+
+        assert!(!result.installed);
+        assert!(!codex.exists());
+        let summary = store.latest_operation().unwrap().unwrap();
+        let detail = store.operation_detail(&summary.trace_id).unwrap();
+        assert!(detail
+            .spans
+            .iter()
+            .filter(|span| span.name == "agentdock.command")
+            .flat_map(|span| span.attributes.iter())
+            .any(|attribute| {
+                attribute.key == "process.command_args"
+                    && matches!(
+                        &attribute.value,
+                        telemetry::OtlpAnyValue::StringArray(args)
+                            if args.windows(2).any(|pair| pair[0] == "skills" && pair[1] == "remove")
+                    )
+            }));
+        drop(operation);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_uninstall_does_not_fallback_to_powershell_when_cli_leaves_installation() {
+        let _guard = TEST_COMMAND_PATH_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap();
+        let root = skill_inventory_test_root("remove-cli-fallback-command");
+        let codex = root.join(".codex/skills/demo");
+        write_test_skill(&codex, "demo");
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        #[cfg(windows)]
+        fs::write(
+            bin.join("npx.cmd"),
+            "@echo off\r\necho cli succeeded without deleting\r\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let executable = bin.join("npx");
+            fs::write(
+                &executable,
+                "#!/bin/sh\necho cli succeeded without deleting\n",
+            )
+            .unwrap();
+            let mut permissions = fs::metadata(&executable).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&executable, permissions).unwrap();
+        }
+        let old_test_command_path = env::var_os("AGENTDOCK_TEST_COMMAND_PATH");
+        env::set_var("AGENTDOCK_TEST_COMMAND_PATH", &bin);
+
+        let telemetry_path = root.join("telemetry.sqlite3");
+        let store = telemetry::TelemetryStore::open(&telemetry_path).unwrap();
+        let operation = store
+            .begin_operation(telemetry::OperationStart {
+                name: "agentdock.skill.uninstall",
+                display_name: "Uninstall Skill",
+                category: "skill",
+                target_type: "skill",
+                target_id: "demo",
+                trigger: "manual",
+            })
+            .unwrap();
+
+        let error = with_current_operation_span_for_test(operation.root_span().clone(), || {
+            uninstall_skill_inner_at_home(&root, "demo", &AppSettings::default())
+        })
+        .unwrap_err();
+        operation.finish_error(&error).unwrap();
+
+        if let Some(old_test_command_path) = old_test_command_path {
+            env::set_var("AGENTDOCK_TEST_COMMAND_PATH", old_test_command_path);
+        } else {
+            env::remove_var("AGENTDOCK_TEST_COMMAND_PATH");
+        }
+
+        assert!(error.contains("Skills CLI 执行完成后仍检测到该 Skill 的安装位置"));
+        assert!(codex.exists());
+        let summary = store.latest_operation().unwrap().unwrap();
+        let detail = store.operation_detail(&summary.trace_id).unwrap();
+        assert_eq!(
+            detail
+                .spans
+                .iter()
+                .filter(|span| span.name == "agentdock.command")
+                .count(),
+            1
+        );
+        assert!(!detail
+            .spans
+            .iter()
+            .any(|span| span.name == "agentdock.local_action"));
+        assert!(!detail.spans.iter().any(|span| {
+            span.attributes.iter().any(|attribute| {
+                attribute.key == "process.command_args"
+                    && matches!(
+                        &attribute.value,
+                        telemetry::OtlpAnyValue::StringArray(args)
+                            if args.iter().any(|arg| arg.contains("Remove-Item"))
+                    )
+            })
+        }));
+        drop(operation);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_installation_uninstall_records_skills_cli_remove_not_powershell_delete() {
+        let _guard = TEST_COMMAND_PATH_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap();
+        let root = skill_inventory_test_root("remove-one-cli");
+        let agents = root.join(".agents/skills/demo");
+        let codex = root.join(".codex/skills/demo");
+        write_test_skill(&agents, "demo");
+        write_test_skill(&codex, "demo");
+        let skill = scan_global_skill_inventory(&root).unwrap().remove(0);
+        let installation = skill
+            .installations
+            .iter()
+            .find(|item| Path::new(&item.path) == codex)
+            .unwrap()
+            .clone();
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        #[cfg(windows)]
+        fs::write(
+            bin.join("npx.cmd"),
+            format!(
+                "@echo off\r\nrmdir /S /Q \"{}\"\r\necho removed by skills cli\r\n",
+                codex.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let executable = bin.join("npx");
+            fs::write(
+                &executable,
+                format!(
+                    "#!/bin/sh\nrm -rf '{}'\necho removed by skills cli\n",
+                    codex.display()
+                ),
+            )
+            .unwrap();
+            let mut permissions = fs::metadata(&executable).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&executable, permissions).unwrap();
+        }
+        let old_test_command_path = env::var_os("AGENTDOCK_TEST_COMMAND_PATH");
+        env::set_var("AGENTDOCK_TEST_COMMAND_PATH", &bin);
+
+        let telemetry_path = root.join("telemetry.sqlite3");
+        let store = telemetry::TelemetryStore::open(&telemetry_path).unwrap();
+        let operation = store
+            .begin_operation(telemetry::OperationStart {
+                name: "agentdock.skill.uninstall",
+                display_name: "Uninstall Skill",
+                category: "skill",
+                target_type: "skill",
+                target_id: "demo",
+                trigger: "manual",
+            })
+            .unwrap();
+
+        let result = with_current_operation_span_for_test(operation.root_span().clone(), || {
+            uninstall_skill_installation_at_home(&root, &skill.id, &installation.id)
+        })
+        .unwrap();
+        operation.finish_ok().unwrap();
+
+        if let Some(old_test_command_path) = old_test_command_path {
+            env::set_var("AGENTDOCK_TEST_COMMAND_PATH", old_test_command_path);
+        } else {
+            env::remove_var("AGENTDOCK_TEST_COMMAND_PATH");
+        }
+
+        assert!(result.installed);
+        assert!(agents.join("SKILL.md").is_file());
+        assert!(!codex.exists());
+        let summary = store.latest_operation().unwrap().unwrap();
+        let detail = store.operation_detail(&summary.trace_id).unwrap();
+        assert!(detail.spans.iter().any(|span| {
+            span.name == "agentdock.command"
+                && span.attributes.iter().any(|attribute| {
+                    attribute.key == "process.command_args"
+                        && matches!(
+                            &attribute.value,
+                            telemetry::OtlpAnyValue::StringArray(args)
+                                if args.windows(2).any(|pair| pair[0] == "skills" && pair[1] == "remove")
+                        )
+                })
+        }));
+        assert!(!detail.spans.iter().any(|span| {
+            span.attributes.iter().any(|attribute| {
+                attribute.key == "process.command_args"
+                    && matches!(
+                        &attribute.value,
+                        telemetry::OtlpAnyValue::StringArray(args)
+                            if args.iter().any(|arg| arg.contains("Remove-Item"))
+                    )
+            })
+        }));
+        drop(operation);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn shared_agents_skill_uninstall_uses_global_remove_without_agent_filter() {
+        let _guard = TEST_COMMAND_PATH_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap();
+        let root = skill_inventory_test_root("remove-agents-cli");
+        let agents = root.join(".agents/skills/demo");
+        write_test_skill(&agents, "demo");
+        let skill = scan_global_skill_inventory(&root).unwrap().remove(0);
+        let installation = skill
+            .installations
+            .iter()
+            .find(|item| Path::new(&item.path) == agents)
+            .unwrap()
+            .clone();
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let marker = root.join("agent-filter-present");
+        #[cfg(windows)]
+        fs::write(
+            bin.join("npx.cmd"),
+            format!(
+                "@echo off\r\necho %* | findstr /C:\"--agent\" > nul && echo agent > \"{}\"\r\nrmdir /S /Q \"{}\"\r\necho removed shared skill\r\n",
+                marker.display(),
+                agents.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let executable = bin.join("npx");
+            fs::write(
+                &executable,
+                format!(
+                    "#!/bin/sh\ncase \"$*\" in *--agent*) echo agent > '{}' ;; esac\nrm -rf '{}'\necho removed shared skill\n",
+                    marker.display(),
+                    agents.display()
+                ),
+            )
+            .unwrap();
+            let mut permissions = fs::metadata(&executable).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&executable, permissions).unwrap();
+        }
+        let old_test_command_path = env::var_os("AGENTDOCK_TEST_COMMAND_PATH");
+        env::set_var("AGENTDOCK_TEST_COMMAND_PATH", &bin);
+
+        let telemetry_path = root.join("telemetry.sqlite3");
+        let store = telemetry::TelemetryStore::open(&telemetry_path).unwrap();
+        let operation = store
+            .begin_operation(telemetry::OperationStart {
+                name: "agentdock.skill.uninstall",
+                display_name: "Uninstall Skill",
+                category: "skill",
+                target_type: "skill",
+                target_id: "demo",
+                trigger: "manual",
+            })
+            .unwrap();
+
+        let result = with_current_operation_span_for_test(operation.root_span().clone(), || {
+            uninstall_skill_installation_at_home(&root, &skill.id, &installation.id)
+        })
+        .unwrap();
+        operation.finish_ok().unwrap();
+
+        if let Some(old_test_command_path) = old_test_command_path {
+            env::set_var("AGENTDOCK_TEST_COMMAND_PATH", old_test_command_path);
+        } else {
+            env::remove_var("AGENTDOCK_TEST_COMMAND_PATH");
+        }
+
+        assert!(!result.installed);
+        assert!(!agents.exists());
+        assert!(!marker.exists());
+        drop(operation);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn uninstalling_skill_directory_link_preserves_its_target() {
         let root = skill_inventory_test_root("unlink");
         let target = root.join(".agents/skills/demo");
@@ -14182,10 +15494,21 @@ mod tests {
     }
 
     #[test]
-    fn skills_cli_enable_apps_builds_one_command_for_all_clients() {
+    fn skills_cli_enable_apps_reuses_installed_package_and_skill_selector() {
         let mut settings = AppSettings::default();
         settings.skill_storage_location = "agentdock".to_string();
         settings.skill_sync_method = "symlink".to_string();
+        let skill = SkillRecord {
+            id: "global::supabase-postgres-best-practices".to_string(),
+            name: "supabase-postgres-best-practices".to_string(),
+            description: String::new(),
+            source: "global".to_string(),
+            installed: true,
+            apps: vec!["codex".to_string()],
+            updated_at: now_rfc3339(),
+            installations: Vec::new(),
+            source_url: Some("https://github.com/supabase/agent-skills".to_string()),
+        };
         let apps = vec![
             "codex".to_string(),
             "antigravity".to_string(),
@@ -14193,7 +15516,7 @@ mod tests {
         ];
 
         let (command, supported) =
-            skills_cli_enable_apps_command("agentdock::shared-skill", &settings, &apps).unwrap();
+            skills_cli_enable_apps_command(&skill, &settings, &apps).unwrap();
 
         assert_eq!(supported, apps);
         assert_eq!(
@@ -14201,10 +15524,12 @@ mod tests {
             vec![
                 "skills",
                 "add",
-                "shared-skill",
+                "supabase/agent-skills",
                 "--yes",
                 "--global",
                 "--copy",
+                "--skill",
+                "supabase-postgres-best-practices",
                 "--agent",
                 "codex",
                 "antigravity",
@@ -15156,6 +16481,107 @@ requires_openai_auth = true"#;
     }
 
     #[test]
+    fn client_detection_records_one_trace_with_child_per_client() {
+        let root = env::temp_dir().join(format!(
+            "agentdock-client-detection-trace-test-{}-{}",
+            std::process::id(),
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let store = telemetry::TelemetryStore::open(&root.join("telemetry.sqlite3")).unwrap();
+        let operation = store
+            .begin_operation(telemetry::OperationStart {
+                name: "agentdock.clients.detect",
+                display_name: "Detect clients",
+                category: "client",
+                target_type: "clients",
+                target_id: "all",
+                trigger: "manual",
+            })
+            .unwrap();
+
+        let statuses = detect_clients_with_search_paths_traced(&[], &[], Some(&operation));
+        let span_names = store.span_names(operation.trace_id()).unwrap();
+
+        assert_eq!(
+            span_names
+                .iter()
+                .filter(|name| name.as_str() == "agentdock.client.detect")
+                .count(),
+            statuses.len()
+        );
+        drop(operation);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn client_detection_records_version_command_output_when_executable_is_found() {
+        let root = env::temp_dir().join(format!(
+            "agentdock-client-detection-command-trace-test-{}-{}",
+            std::process::id(),
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ));
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let executable = bin.join(if cfg!(windows) { "codex.cmd" } else { "codex" });
+        fs::write(
+            &executable,
+            if cfg!(windows) {
+                "@echo codex 9.8.7\r\n"
+            } else {
+                "#!/bin/sh\nprintf 'codex 9.8.7'\n"
+            },
+        )
+        .unwrap();
+        #[cfg(unix)]
+        make_executable(&executable).unwrap();
+
+        let store = telemetry::TelemetryStore::open(&root.join("telemetry.sqlite3")).unwrap();
+        let operation = store
+            .begin_operation(telemetry::OperationStart {
+                name: "agentdock.clients.detect",
+                display_name: "Detect clients",
+                category: "client",
+                target_type: "clients",
+                target_id: "all",
+                trigger: "manual",
+            })
+            .unwrap();
+
+        let statuses = detect_clients_with_search_paths_traced(&[], &[bin], Some(&operation));
+        operation.finish_ok().unwrap();
+        let detail = store
+            .operation_detail(&bytes_to_hex(operation.trace_id()))
+            .unwrap();
+
+        assert!(
+            statuses
+                .iter()
+                .any(|client| client.id == "codex"
+                    && client.version.as_deref() == Some("codex 9.8.7"))
+        );
+        let command_spans = detail
+            .spans
+            .iter()
+            .filter(|span| span.name == "agentdock.command")
+            .collect::<Vec<_>>();
+        assert!(
+            command_spans.iter().any(|span| span
+                .stdout_preview
+                .as_deref()
+                .unwrap_or_default()
+                .contains("codex 9.8.7")),
+            "detect should record version command stdout"
+        );
+        drop(command_spans);
+        drop(detail);
+        drop(operation);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn isolates_official_grok_install_directory_from_other_clients() {
         let home = dirs_home().expect("home directory should be available");
         let grok_bin = home.join(".grok/bin");
@@ -15365,6 +16791,179 @@ requires_openai_auth = true"#;
 
         assert_eq!(result.unwrap_err(), "Skills CLI 执行超时");
         assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn skills_cli_records_command_span_and_raw_output_in_current_operation() {
+        let root = env::temp_dir().join(format!(
+            "agentdock-skills-cli-telemetry-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let telemetry_path = root.join("telemetry.sqlite3");
+        let store = telemetry::TelemetryStore::open(&telemetry_path).unwrap();
+        let operation = store
+            .begin_operation(telemetry::OperationStart {
+                name: "agentdock.skill.install",
+                display_name: "Install Skill",
+                category: "skill",
+                target_type: "skill",
+                target_id: "demo",
+                trigger: "manual",
+            })
+            .unwrap();
+        #[cfg(windows)]
+        let executable = {
+            let path = root.join("fake-skills.cmd");
+            fs::write(&path, "@echo off\r\necho installed from %CD%\r\n").unwrap();
+            path
+        };
+        #[cfg(unix)]
+        let executable = {
+            use std::os::unix::fs::PermissionsExt;
+            let path = root.join("fake-skills");
+            fs::write(&path, "#!/bin/sh\necho installed from \"$PWD\"\n").unwrap();
+            let mut permissions = fs::metadata(&path).unwrap().permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(&path, permissions).unwrap();
+            path
+        };
+
+        let result = with_current_operation_span_for_test(operation.root_span().clone(), || {
+            run_skills_cli(
+                SkillsCliCommand {
+                    program: executable.display().to_string(),
+                    args: vec!["skills".to_string(), "add".to_string(), "demo".to_string()],
+                },
+                &root,
+            )
+        })
+        .unwrap();
+
+        assert!(result.contains("installed from"));
+        operation.finish_ok().unwrap();
+        let summary = store.latest_operation().unwrap().unwrap();
+        let detail = store.operation_detail(&summary.trace_id).unwrap();
+        let command_span = detail
+            .spans
+            .iter()
+            .find(|span| span.name == "agentdock.command")
+            .expect("skills cli command span should be recorded");
+        assert!(command_span
+            .stdout_preview
+            .as_deref()
+            .unwrap_or_default()
+            .contains("installed from"));
+        assert!(command_span
+            .attributes
+            .iter()
+            .any(|attribute| attribute.key == "process.cwd"
+                && attribute.value == telemetry::OtlpAnyValue::String(root.display().to_string())));
+        let output = store
+            .operation_output(telemetry::OutputQuery {
+                trace_id: summary.trace_id,
+                span_id: command_span.span_id.clone(),
+                stream: "stdout".to_string(),
+                offset: Some(0),
+                limit: Some(4096),
+            })
+            .unwrap();
+        assert!(output.text.unwrap().contains("installed from"));
+
+        drop(operation);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn traced_command_records_full_raw_stdout_result() {
+        let root = env::temp_dir().join(format!(
+            "agentdock-command-final-output-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let db_path = root.join("telemetry.sqlite3");
+        let store = telemetry::TelemetryStore::open(&db_path).unwrap();
+        let operation = store
+            .begin_operation(telemetry::OperationStart {
+                name: "agentdock.skill.install",
+                display_name: "Install Skill",
+                category: "skill",
+                target_type: "skill",
+                target_id: "demo",
+                trigger: "user",
+            })
+            .unwrap();
+        let span = operation
+            .begin_span(
+                "agentdock.command",
+                vec![telemetry::OtlpKeyValue::string("process.command", "test")],
+            )
+            .unwrap();
+
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("powershell.exe");
+            command.args([
+                "-NoProfile",
+                "-Command",
+                "$esc = [char]27; Write-Output 'downloading 10%'; Write-Output \"${esc}[32mDone!${esc}[39m Review skills before use\"",
+            ]);
+            command
+        };
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args([
+                "-c",
+                "printf 'downloading 10%\\n\\033[32mDone!\\033[39m Review skills before use\\n'",
+            ]);
+            command
+        };
+
+        command_output_with_timeout_message_traced(
+            &mut command,
+            std::time::Duration::from_secs(3),
+            "command timed out",
+            Some(&span),
+        )
+        .unwrap();
+        span.finish_ok().unwrap();
+        operation.finish_ok().unwrap();
+
+        let summary = store.latest_operation().unwrap().unwrap();
+        let detail = store.operation_detail(&summary.trace_id).unwrap();
+        let command_span = detail
+            .spans
+            .iter()
+            .find(|span| span.name == "agentdock.command")
+            .unwrap();
+        let preview = command_span.stdout_preview.as_deref().unwrap_or_default();
+        assert!(preview.contains("downloading 10%"));
+        assert!(preview.contains("[32mDone![39m") || preview.contains("\u{1b}[32mDone!\u{1b}[39m"));
+        let output = store
+            .operation_output(telemetry::OutputQuery {
+                trace_id: summary.trace_id,
+                span_id: command_span.span_id.clone(),
+                stream: "stdout".to_string(),
+                offset: Some(0),
+                limit: Some(4096),
+            })
+            .unwrap();
+        let text = output.text.unwrap();
+        assert!(text.contains("downloading 10%"));
+        assert!(text.contains("[32mDone![39m") || text.contains("\u{1b}[32mDone!\u{1b}[39m"));
+
+        drop(detail);
+        drop(span);
+        drop(operation);
+        drop(store);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
