@@ -108,7 +108,7 @@ Preview builds may be unsigned or not notarized and can trigger an operating-sys
 - Provider API keys are stored in the local AgentDock configuration directory and are never committed to this repository.
 - Secret files receive restrictive permissions on Unix systems. The current preview does not yet use the operating-system keychain or credential vault.
 - Usage statistics are calculated from local client session data and are not uploaded by AgentDock.
-- Network access is used for software metadata and downloads, provider tests and model discovery, and user-configured MCP connections.
+- Network access is used for software metadata and downloads, provider tests and model discovery, user-configured MCP connections, and packaged OpenTelemetry exception reporting.
 - Diagnostic exports remove API keys, URL credentials, MCP environment values, and header values. They can still contain system versions and local paths, so review them before sharing.
 
 See [SECURITY.md](SECURITY.md) for vulnerability reporting.

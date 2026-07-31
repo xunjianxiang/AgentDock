@@ -14,7 +14,10 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
+#[cfg(any(target_os = "macos", all(test, unix)))]
+use std::io::Write;
 use std::{
+    backtrace::Backtrace,
     cell::RefCell,
     collections::{BTreeMap, HashMap, HashSet},
     env,
@@ -50,9 +53,14 @@ const MANAGED_PATH_BLOCK_START: &str = "# >>> AgentDock CLI >>>";
 const MANAGED_PATH_BLOCK_END: &str = "# <<< AgentDock CLI <<<";
 const SKILLS_CLI_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(180);
 const SKILLS_CLI_TIMEOUT_MESSAGE: &str = "Skills CLI 执行超时（3 分钟），请检查网络或 npm 状态";
+<<<<<<< HEAD
+const CLIENT_VERSION_TIMEOUT_MESSAGE: &str = "读取客户端版本号超时";
+=======
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
 const SKILL_FILE_PREVIEW_LIMIT: u64 = 1_048_576;
 use time::{format_description::well_known::Rfc3339, Duration, OffsetDateTime};
 
+mod otlp_upload;
 mod telemetry;
 
 #[derive(Debug, Serialize)]
@@ -65,6 +73,16 @@ pub struct DesktopStatus {
     home_dir: String,
     managed_runtime_ready: bool,
     clients: Vec<ClientStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FrontendExceptionInput {
+    source: String,
+    exception_type: String,
+    message: String,
+    stacktrace: String,
+    location: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -776,6 +794,27 @@ async fn get_operation_output(
         let dirs = agentdock_dirs()?;
         let store = telemetry_store(&dirs)?;
         store.operation_output(query)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+async fn report_operation_record(
+    trace_id: String,
+) -> Result<otlp_upload::OperationReportResult, String> {
+    let dirs = agentdock_dirs()?;
+    let store = telemetry_store(&dirs)?;
+    otlp_upload::report_operation(store, &trace_id).await
+}
+
+#[tauri::command]
+async fn record_frontend_exception(input: FrontendExceptionInput) -> Result<(), String> {
+    let input = normalize_frontend_exception(input)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let dirs = agentdock_dirs()?;
+        let store = telemetry_store(&dirs)?;
+        store.record_standalone_exception("frontend", input)
     })
     .await
     .map_err(|error| error.to_string())?
@@ -5619,11 +5658,17 @@ fn find_scanned_skill(home: &Path, skill_id: &str) -> Result<SkillRecord, String
 fn preferred_skill_copy_source(skill: &SkillRecord) -> Result<PathBuf, String> {
     let mut installations = skill.installations.iter().collect::<Vec<_>>();
     installations.sort_by_key(|installation| {
+<<<<<<< HEAD
         let path = Path::new(&installation.path);
         (
             !is_agents_shared_skill_path(path),
             installation.is_link,
             skill_path_identity(path),
+=======
+        (
+            installation.is_link,
+            skill_path_identity(Path::new(&installation.path)),
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
         )
     });
     for installation in installations {
@@ -5638,10 +5683,13 @@ fn preferred_skill_copy_source(skill: &SkillRecord) -> Result<PathBuf, String> {
     Err("没有可用于复制的本地 Skill 安装".to_string())
 }
 
+<<<<<<< HEAD
 fn is_agents_shared_skill_path(path: &Path) -> bool {
     skill_path_identity(path).contains("/.agents/skills/")
 }
 
+=======
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
 fn copy_skill_entry(
     source_root: &Path,
     source: &Path,
@@ -6487,6 +6535,7 @@ async fn enable_skill_apps(
     skill_id: String,
     apps: Vec<String>,
 ) -> Result<SkillEnableResult, String> {
+<<<<<<< HEAD
     let target_id = skill_id.clone();
     run_skill_write(move || {
         record_business_operation(
@@ -6500,6 +6549,9 @@ async fn enable_skill_apps(
         )
     })
     .await
+=======
+    run_skill_write(move || enable_skill_apps_inner(skill_id, apps)).await
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
 }
 
 fn enable_skill_apps_inner(
@@ -6527,8 +6579,12 @@ fn enable_skill_apps_inner(
     let scoped_settings = skill_source_settings(&settings, source);
     let cwd = skills_cli_working_directory(&scoped_settings)?
         .ok_or_else(|| "Cannot resolve Skills CLI working directory".to_string())?;
+<<<<<<< HEAD
     let installed_skill = find_scanned_skill(&home, &skill_id)?;
     let cli_attempt = skills_cli_enable_apps_command(&installed_skill, &scoped_settings, &apps);
+=======
+    let cli_attempt = skills_cli_enable_apps_command(&skill_id, &scoped_settings, &apps);
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
     enable_local_skill_target_at_home(&home, &skill_id, &apps, move || {
         let (command, _) = cli_attempt?;
         run_skills_cli(command, &cwd)?;
@@ -6832,11 +6888,15 @@ fn validate_skill_installation_path(path: &Path, root: &Path) -> Result<(), Stri
     Ok(())
 }
 
+<<<<<<< HEAD
 #[cfg(test)]
+=======
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
 fn remove_skill_installation_path(path: &Path) -> Result<(), String> {
     let metadata =
         fs::symlink_metadata(path).map_err(|_| "安装位置已变化，请刷新后重试".to_string())?;
     if metadata.file_type().is_symlink() {
+<<<<<<< HEAD
         return record_local_action("remove_link", path, || remove_skill_link(path));
     }
     record_local_action("remove_dir", path, || {
@@ -6891,6 +6951,12 @@ fn skill_remove_path_command(path: &Path, _is_link: bool) -> Command {
     let mut command = Command::new("rm");
     command.arg("-rf").arg("--").arg(path);
     command
+=======
+        remove_skill_link(path)
+    } else {
+        fs::remove_dir_all(path).map_err(|err| format!("卸载 Skill 失败: {}", err))
+    }
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
 }
 
 fn normalized_existing_path(path: &Path) -> Option<PathBuf> {
@@ -6969,12 +7035,16 @@ fn remove_global_skill_lock_entry(home: &Path, skill_name: &str) -> Result<(), S
     write_json(&path, &value)
 }
 
+<<<<<<< HEAD
 #[allow(unreachable_code)]
+=======
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
 fn uninstall_skill_installation_at_home(
     home: &Path,
     skill_id: &str,
     installation_id: &str,
 ) -> Result<SkillRecord, String> {
+<<<<<<< HEAD
     return uninstall_skill_installation_at_home_inner(home, skill_id, installation_id);
     record_business_operation(
         "agentdock.skill.uninstall",
@@ -7027,6 +7097,8 @@ fn uninstall_skill_installation_at_home_inner(
     skill_id: &str,
     installation_id: &str,
 ) -> Result<SkillRecord, String> {
+=======
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
     let (skill, installation, root) = resolve_skill_installation(home, skill_id, installation_id)?;
     let path = PathBuf::from(&installation.path);
     validate_skill_installation_path(&path, &root.path)?;
@@ -7035,6 +7107,7 @@ fn uninstall_skill_installation_at_home_inner(
     } else {
         dependent_skill_link_paths(&skill, &path)
     };
+<<<<<<< HEAD
     if let Some(result) = uninstall_skill_installation_with_skills_cli(home, &skill, &installation)?
     {
         return Ok(result);
@@ -7062,8 +7135,8 @@ fn uninstall_skill_installation_with_skills_cli(
         return Ok(None);
     };
     let target = skills_cli_remove_target(skill);
-    let remove_apps = (!is_agents_shared_skill_path(Path::new(&installation.path)))
-        .then_some(apps.as_slice());
+    let remove_apps =
+        (!is_agents_shared_skill_path(Path::new(&installation.path))).then_some(apps.as_slice());
     run_skills_cli_allowing_missing_skill(
         skills_cli_remove_command(&target, &scoped_settings, remove_apps),
         &cwd,
@@ -7077,6 +7150,11 @@ fn skill_record_after_installation_removed(
     skill: SkillRecord,
     installation_id: &str,
 ) -> Result<SkillRecord, String> {
+=======
+    detach_dependent_skill_links(&path, &dependents)?;
+    remove_skill_installation_path(&path)?;
+
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
     if let Some(remaining) = scan_global_skill_inventory(home)?
         .into_iter()
         .find(|record| record.id == skill.id)
@@ -7160,11 +7238,15 @@ async fn inspect_skill_uninstall(
 }
 
 #[tauri::command]
+<<<<<<< HEAD
 #[allow(unreachable_code)]
+=======
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
 async fn uninstall_skill_installation(
     skill_id: String,
     installation_id: String,
 ) -> Result<SkillRecord, String> {
+<<<<<<< HEAD
     let target_id = skill_id.clone();
     return run_skill_write(move || {
         record_business_operation(
@@ -7181,6 +7263,8 @@ async fn uninstall_skill_installation(
         )
     })
     .await;
+=======
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
     run_skill_write(move || {
         let home = dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?;
         uninstall_skill_installation_at_home(&home, &skill_id, &installation_id)
@@ -7207,6 +7291,7 @@ async fn uninstall_skill(skill_id: String) -> Result<SkillRecord, String> {
 
 fn uninstall_skill_inner(skill_id: String) -> Result<SkillRecord, String> {
     let home = dirs_home().ok_or_else(|| "无法确定用户主目录".to_string())?;
+<<<<<<< HEAD
     let settings = agentdock_dirs()
         .and_then(|dirs| read_app_settings(&dirs))
         .unwrap_or_else(|_| AppSettings::default());
@@ -7284,23 +7369,54 @@ fn uninstall_skill_locally_at_home(home: &Path, skill: SkillRecord) -> Result<Sk
         remove_skill_installation_path_with_command(&path)?;
     }
     if scan_global_skill_inventory(home)?
+=======
+    let skill = scan_global_skill_inventory(&home)?
+        .into_iter()
+        .find(|skill| skill.id == skill_id)
+        .ok_or_else(|| "Skill 安装状态已变化，请刷新后重试".to_string())?;
+    let roots = global_skill_roots(&home);
+    let mut resolved = Vec::new();
+    for installation in &skill.installations {
+        let path = PathBuf::from(&installation.path);
+        let root = roots
+            .iter()
+            .find(|root| path.parent() == Some(root.path.as_path()))
+            .ok_or_else(|| "安装位置不属于受支持的 Agent Skills 目录".to_string())?;
+        validate_skill_installation_path(&path, &root.path)?;
+        resolved.push((installation.is_link, path));
+    }
+    resolved.sort_by_key(|(is_link, _)| !*is_link);
+    for (_, path) in resolved {
+        remove_skill_installation_path(&path)?;
+    }
+    if scan_global_skill_inventory(&home)?
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
         .iter()
         .any(|record| record.id == skill.id)
     {
         return Err("卸载后仍检测到该 Skill 的安装位置".to_string());
     }
+<<<<<<< HEAD
     remove_global_skill_lock_entry(home, &skill.name)?;
     Ok(uninstalled_skill_record(skill))
 }
 
 fn uninstalled_skill_record(skill: SkillRecord) -> SkillRecord {
     SkillRecord {
+=======
+    remove_global_skill_lock_entry(&home, &skill.name)?;
+    Ok(SkillRecord {
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
         installed: false,
         apps: Vec::new(),
         installations: Vec::new(),
         updated_at: now_rfc3339(),
         ..skill
+<<<<<<< HEAD
     }
+=======
+    })
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
 }
 
 fn uninstall_legacy_skill(dirs: &AgentDockDirs, skill_id: String) -> Result<SkillRecord, String> {
@@ -10547,15 +10663,18 @@ pub fn run() {
     }
 
     detach_console_for_desktop_launch();
+    initialize_exception_telemetry();
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             if let Err(error) = agentdock_dirs().and_then(|dirs| {
                 ensure_dirs(&dirs)?;
-                migrate_managed_mcp_servers(&dirs)
+                migrate_managed_mcp_servers(&dirs)?;
+                let store = telemetry_store(&dirs)?;
+                otlp_upload::start_background_uploader(store)
             }) {
-                eprintln!("AgentDock: 迁移托管客户端 MCP 配置失败: {}", error);
+                eprintln!("AgentDock: 初始化本地配置失败: {}", error);
             }
             if let Err(error) = repair_managed_cli_access() {
                 eprintln!("AgentDock: 修复终端命令失败: {}", error);
@@ -10595,6 +10714,8 @@ pub fn run() {
             list_operation_records,
             get_operation_record,
             get_operation_output,
+            report_operation_record,
+            record_frontend_exception,
             check_app_update,
             install_app_update,
             get_app_settings,
@@ -10781,6 +10902,96 @@ fn telemetry_store(dirs: &AgentDockDirs) -> Result<Arc<telemetry::TelemetryStore
     Ok(TELEMETRY_STORE.get().cloned().unwrap_or(store))
 }
 
+fn normalize_frontend_exception(
+    input: FrontendExceptionInput,
+) -> Result<telemetry::ExceptionInput, String> {
+    if !matches!(
+        input.source.as_str(),
+        "frontend.error" | "frontend.unhandledrejection"
+    ) {
+        return Err("Invalid frontend exception source".to_string());
+    }
+    Ok(telemetry::ExceptionInput {
+        source: input.source,
+        exception_type: input.exception_type,
+        message: input.message,
+        stacktrace: input.stacktrace,
+        location: input.location,
+    })
+}
+
+fn panic_exception_input(
+    payload: &(dyn std::any::Any + Send),
+    location: Option<(&str, u32, u32)>,
+    backtrace: &str,
+) -> telemetry::ExceptionInput {
+    let message = payload
+        .downcast_ref::<String>()
+        .cloned()
+        .or_else(|| {
+            payload
+                .downcast_ref::<&str>()
+                .map(|value| (*value).to_string())
+        })
+        .unwrap_or_else(|| "Non-string panic payload".to_string());
+    let mut stacktrace = location
+        .map(|(file, line, column)| format!("at {file}:{line}:{column}"))
+        .unwrap_or_default();
+    if !backtrace.trim().is_empty() {
+        if !stacktrace.is_empty() {
+            stacktrace.push('\n');
+        }
+        stacktrace.push_str(backtrace);
+    }
+    telemetry::ExceptionInput {
+        source: "rust.panic".to_string(),
+        exception_type: "rust.panic".to_string(),
+        message,
+        stacktrace,
+        location: location
+            .map(|(file, line, column)| format!("{file}:{line}:{column}"))
+            .unwrap_or_default(),
+    }
+}
+
+fn install_panic_hook() {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let location = panic_info
+                .location()
+                .map(|location| (location.file(), location.line(), location.column()));
+            let backtrace = Backtrace::force_capture().to_string();
+            let input = panic_exception_input(panic_info.payload(), location, &backtrace);
+            let current_span = CURRENT_OPERATION_SPAN
+                .try_with(|current| {
+                    current
+                        .try_borrow()
+                        .ok()
+                        .and_then(|span| span.as_ref().cloned())
+                })
+                .ok()
+                .flatten();
+            if let Some(store) = TELEMETRY_STORE.get() {
+                if let Some(span) = current_span {
+                    let _ = store.try_record_exception_on_span(&span, input);
+                } else {
+                    let _ = store.try_record_standalone_exception("rust", input);
+                }
+            }
+        }));
+        previous(panic_info);
+    }));
+}
+
+fn initialize_exception_telemetry() {
+    if let Ok(dirs) = agentdock_dirs() {
+        let _ = ensure_dirs(&dirs);
+        let _ = telemetry_store(&dirs);
+    }
+    install_panic_hook();
+}
+
 fn normalize_telemetry_trigger(trigger: Option<&str>) -> &'static str {
     match trigger {
         Some("manual") => "manual",
@@ -10951,15 +11162,29 @@ where
     result
 }
 
+struct CurrentOperationSpanGuard {
+    previous: Option<telemetry::SpanContext>,
+}
+
+impl Drop for CurrentOperationSpanGuard {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        let _ = CURRENT_OPERATION_SPAN.try_with(|current| {
+            if let Ok(mut current) = current.try_borrow_mut() {
+                *current = previous;
+            }
+        });
+    }
+}
+
 fn with_current_operation_span<T, F>(span: telemetry::SpanContext, action: F) -> T
 where
     F: FnOnce() -> T,
 {
     CURRENT_OPERATION_SPAN.with(|current| {
         let previous = current.replace(Some(span));
-        let result = action();
-        current.replace(previous);
-        result
+        let _guard = CurrentOperationSpanGuard { previous };
+        action()
     })
 }
 
@@ -12067,7 +12292,7 @@ fn command_output_with_timeout(
     command: &mut Command,
     timeout: std::time::Duration,
 ) -> Result<std::process::Output, String> {
-    command_output_with_timeout_message(command, timeout, "读取客户端版本号超时")
+    command_output_with_timeout_message(command, timeout, CLIENT_VERSION_TIMEOUT_MESSAGE)
 }
 
 fn command_output_with_timeout_message(
@@ -12122,7 +12347,7 @@ fn command_output_with_timeout_traced(
     command_output_with_timeout_message_traced(
         command,
         timeout,
-        "璇诲彇瀹㈡埛绔増鏈彿瓒呮椂",
+        CLIENT_VERSION_TIMEOUT_MESSAGE,
         span,
     )
 }
@@ -12133,30 +12358,37 @@ fn command_output_with_timeout_message_traced(
     timeout_message: &str,
     span: Option<&telemetry::SpanContext>,
 ) -> Result<std::process::Output, String> {
-    if let Some(span) = span {
-        let args = std::iter::once(command.get_program().to_string_lossy().to_string())
-            .chain(
-                command
-                    .get_args()
-                    .map(|arg| arg.to_string_lossy().to_string()),
-            )
-            .collect::<Vec<_>>();
-        let _ = span.append_log(telemetry::LogInput::info(
-            "agentdock.command.start",
-            telemetry::OtlpAnyValue::String(args.join(" ")),
-            vec![telemetry::OtlpKeyValue {
-                key: "process.command_args".to_string(),
-                value: telemetry::OtlpAnyValue::StringArray(args),
-            }],
-        ));
-    }
+    let args = std::iter::once(command.get_program().to_string_lossy().to_string())
+        .chain(
+            command
+                .get_args()
+                .map(|arg| arg.to_string_lossy().to_string()),
+        )
+        .collect::<Vec<_>>();
+    let started = Instant::now();
     let result = command_output_with_timeout_message(command, timeout, timeout_message);
     match (&result, span) {
         (Ok(output), Some(span)) => {
-            let _ = span.append_command_output(telemetry::CommandStream::Stdout, &output.stdout);
-            let _ = span.append_command_output(telemetry::CommandStream::Stderr, &output.stderr);
+            let _ = span.append_command_record(telemetry::CommandRecord {
+                args: &args,
+                stdout: &output.stdout,
+                stderr: &output.stderr,
+                success: output.status.success(),
+                exit_code: output.status.code(),
+                duration_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                error: None,
+            });
         }
         (Err(error), Some(span)) => {
+            let _ = span.append_command_record(telemetry::CommandRecord {
+                args: &args,
+                stdout: &[],
+                stderr: &[],
+                success: false,
+                exit_code: None,
+                duration_ms: started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+                error: Some(error),
+            });
             let _ = span.finish_error(error);
         }
         _ => {}
@@ -14020,6 +14252,75 @@ mod tests {
     use super::*;
     use std::sync::{atomic::AtomicUsize, Arc};
 
+    #[test]
+    fn panic_exception_input_normalizes_string_payload_and_location() {
+        let payload: Box<dyn std::any::Any + Send> = Box::new("boom".to_string());
+        let input = panic_exception_input(
+            payload.as_ref(),
+            Some(("src/lib.rs", 10, 4)),
+            "test backtrace",
+        );
+
+        assert_eq!(input.source, "rust.panic");
+        assert_eq!(input.exception_type, "rust.panic");
+        assert_eq!(input.message, "boom");
+        assert!(input.stacktrace.contains("src/lib.rs:10:4"));
+        assert!(input.stacktrace.contains("test backtrace"));
+    }
+
+    #[test]
+    fn panic_exception_input_handles_non_string_payload() {
+        let payload: Box<dyn std::any::Any + Send> = Box::new(42_u32);
+        let input = panic_exception_input(payload.as_ref(), None, "");
+
+        assert_eq!(input.message, "Non-string panic payload");
+    }
+
+    #[test]
+    fn frontend_exception_input_rejects_non_frontend_source() {
+        let result = normalize_frontend_exception(FrontendExceptionInput {
+            source: "rust.panic".into(),
+            exception_type: "Error".into(),
+            message: "forged".into(),
+            stacktrace: String::new(),
+            location: String::new(),
+        });
+
+        assert_eq!(result.unwrap_err(), "Invalid frontend exception source");
+    }
+
+    #[test]
+    fn current_operation_span_is_restored_after_panic() {
+        let path = env::temp_dir().join(format!(
+            "agentdock-operation-span-panic-{}-{}.sqlite3",
+            std::process::id(),
+            OffsetDateTime::now_utc().unix_timestamp_nanos()
+        ));
+        let store = telemetry::TelemetryStore::open(&path).unwrap();
+        let operation = store
+            .begin_operation(telemetry::OperationStart {
+                name: "agentdock.test.panic",
+                display_name: "Panic test",
+                category: "test",
+                target_type: "test",
+                target_id: "panic",
+                trigger: "manual",
+            })
+            .unwrap();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            with_current_operation_span_for_test(operation.root_span().clone(), || {
+                panic!("expected test panic");
+            });
+        }));
+
+        assert!(result.is_err());
+        assert!(current_operation_span().is_none());
+        drop(operation);
+        drop(store);
+        let _ = fs::remove_file(path);
+    }
+
     fn provider_test_profile(
         id: &str,
         enabled_apps: &[&str],
@@ -14591,6 +14892,443 @@ mod tests {
         .unwrap();
     }
 
+<<<<<<< HEAD
+=======
+    #[test]
+    fn skill_target_groups_merge_clients_with_the_same_path() {
+        let root = skill_inventory_test_root("target-groups");
+        let groups = skill_target_groups_at_home(
+            &root,
+            "review",
+            &[
+                "codex".to_string(),
+                "antigravity".to_string(),
+                "opencode".to_string(),
+                "grok".to_string(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(groups.len(), 2);
+        assert_eq!(
+            Path::new(&groups[0].path),
+            root.join(".agents/skills/review")
+        );
+        assert_eq!(groups[0].apps, vec!["codex", "antigravity", "opencode"]);
+        assert_eq!(Path::new(&groups[1].path), root.join(".grok/skills/review"));
+    }
+
+    #[test]
+    fn skill_target_groups_ignore_claude_desktop() {
+        let root = skill_inventory_test_root("ignore-desktop");
+        let groups =
+            skill_target_groups_at_home(&root, "review", &["claude-desktop".to_string()]).unwrap();
+
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn skill_copy_source_prefers_real_installation() {
+        let root = skill_inventory_test_root("copy-source");
+        let linked = root.join("linked-skill");
+        let real = root.join("real-skill");
+        write_test_skill(&linked, "review");
+        write_test_skill(&real, "review");
+        let skill = SkillRecord {
+            id: "global::review".to_string(),
+            name: "review".to_string(),
+            description: String::new(),
+            source: "global".to_string(),
+            installed: true,
+            apps: vec!["codex".to_string()],
+            updated_at: now_rfc3339(),
+            installations: vec![
+                SkillInstallation {
+                    id: "linked".to_string(),
+                    path: linked.display().to_string(),
+                    apps: vec!["codex".to_string()],
+                    is_link: true,
+                    link_target: Some(real.display().to_string()),
+                },
+                SkillInstallation {
+                    id: "real".to_string(),
+                    path: real.display().to_string(),
+                    apps: vec!["codex".to_string()],
+                    is_link: false,
+                    link_target: None,
+                },
+            ],
+            source_url: None,
+        };
+
+        assert_eq!(
+            skill_path_identity(&preferred_skill_copy_source(&skill).unwrap()),
+            skill_path_identity(&fs::canonicalize(&real).unwrap())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_copy_preserves_nested_files() {
+        let root = skill_inventory_test_root("copy-nested");
+        let source = root.join("source");
+        let target = root.join(".grok/skills/review");
+        write_test_skill(&source, "review");
+        fs::create_dir_all(source.join("references")).unwrap();
+        fs::write(source.join("references/guide.md"), "guide").unwrap();
+
+        copy_skill_directory(&source, &target).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(target.join("references/guide.md")).unwrap(),
+            "guide"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_copy_refuses_existing_target() {
+        let root = skill_inventory_test_root("copy-conflict");
+        let source = root.join("source");
+        let target = root.join(".grok/skills/review");
+        write_test_skill(&source, "review");
+        write_test_skill(&target, "existing");
+
+        let error = copy_skill_directory(&source, &target).unwrap_err();
+
+        assert!(error.contains("已存在"));
+        assert!(target.join("SKILL.md").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_enable_falls_back_to_local_copy_when_cli_fails() {
+        let root = skill_inventory_test_root("enable-fallback");
+        let source = root.join(".codex/skills/review");
+        write_test_skill(&source, "review");
+        fs::create_dir_all(source.join("references")).unwrap();
+        fs::write(source.join("references/guide.md"), "copied").unwrap();
+        let skill = scan_global_skill_inventory(&root).unwrap().remove(0);
+
+        let result =
+            enable_local_skill_target_at_home(&root, &skill.id, &["grok".to_string()], || {
+                Err("npx failed".to_string())
+            })
+            .unwrap();
+
+        assert_eq!(result.method, "copy");
+        assert_eq!(
+            fs::read_to_string(root.join(".grok/skills/review/references/guide.md")).unwrap(),
+            "copied"
+        );
+        assert_eq!(result.skill.installations.len(), 2);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_files_put_skill_markdown_first() {
+        let root = skill_inventory_test_root("files-order");
+        write_test_skill(&root, "review");
+        fs::create_dir_all(root.join("references")).unwrap();
+        fs::write(root.join("references/z.md"), "z").unwrap();
+        fs::write(root.join("a.txt"), "a").unwrap();
+
+        let files = list_skill_files_in_root(&root).unwrap();
+
+        assert_eq!(
+            files
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["SKILL.md", "a.txt", "references/z.md"]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_file_read_rejects_parent_traversal() {
+        let root = skill_inventory_test_root("files-traversal");
+        write_test_skill(&root, "review");
+
+        let error = read_skill_file_in_root(&root, "../secret.txt").unwrap_err();
+
+        assert!(error.contains("相对路径"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_file_read_marks_binary_and_large_files_unpreviewable() {
+        let root = skill_inventory_test_root("files-limits");
+        write_test_skill(&root, "review");
+        fs::write(root.join("binary.bin"), [0_u8, 1, 2]).unwrap();
+        fs::write(root.join("large.txt"), vec![b'x'; 1_048_577]).unwrap();
+
+        let binary = read_skill_file_in_root(&root, "binary.bin").unwrap();
+        let large = read_skill_file_in_root(&root, "large.txt").unwrap();
+
+        assert!(!binary.previewable);
+        assert!(binary.content.is_none());
+        assert!(binary.reason.unwrap().contains("二进制"));
+        assert!(!large.previewable);
+        assert!(large.content.is_none());
+        assert!(large.reason.unwrap().contains("1 MiB"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn global_skill_inventory_groups_same_named_installations_by_path() {
+        let root = skill_inventory_test_root("duplicates");
+        write_test_skill(&root.join(".agents/skills/demo"), "demo");
+        write_test_skill(&root.join(".codex/skills/demo"), "demo");
+
+        let skills = scan_global_skill_inventory(&root).unwrap();
+
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].name, "demo");
+        assert_eq!(skills[0].installations.len(), 2);
+        assert_ne!(skills[0].installations[0].id, skills[0].installations[1].id);
+        assert!(skills[0].apps.contains(&"codex".to_string()));
+        assert!(skills[0]
+            .installations
+            .iter()
+            .any(|item| Path::new(&item.path) == root.join(".agents/skills/demo")));
+        assert!(skills[0]
+            .installations
+            .iter()
+            .any(|item| Path::new(&item.path) == root.join(".codex/skills/demo")));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn installed_skill_source_url_builds_github_repository_root() {
+        assert_eq!(
+            installed_skill_source_url(
+                "github",
+                "https://github.com/vercel-labs/agent-skills.git",
+                "skills/react-native-skills/SKILL.md",
+            )
+            .as_deref(),
+            Some("https://github.com/vercel-labs/agent-skills")
+        );
+        assert_eq!(
+            installed_skill_source_url(
+                "github",
+                "https://github.com/example/root-skill.git",
+                "SKILL.md",
+            )
+            .as_deref(),
+            Some("https://github.com/example/root-skill")
+        );
+    }
+
+    #[test]
+    fn installed_skill_source_url_rejects_untrusted_metadata() {
+        assert!(installed_skill_source_url(
+            "git",
+            "https://github.com/example/repository.git",
+            "skills/demo/SKILL.md",
+        )
+        .is_none());
+        assert!(installed_skill_source_url(
+            "github",
+            "https://github.com.example.com/example/repository.git",
+            "skills/demo/SKILL.md",
+        )
+        .is_none());
+        assert!(installed_skill_source_url(
+            "github",
+            "https://github.com/example/repository.git",
+            "skills/../secret/SKILL.md",
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn installed_skill_source_metadata_is_merged_into_inventory() {
+        let root = skill_inventory_test_root("source-metadata");
+        write_test_skill(&root.join(".agents/skills/demo"), "demo");
+        fs::write(
+            root.join(".agents/.skill-lock.json"),
+            r#"{"version":3,"skills":{"demo":{"source":"example/repository","sourceType":"github","sourceUrl":"https://github.com/example/repository.git","skillPath":"skills/demo/SKILL.md"}}}"#,
+        )
+        .unwrap();
+
+        let skills = scan_global_skill_inventory(&root).unwrap();
+
+        assert_eq!(
+            skills[0].source_url.as_deref(),
+            Some("https://github.com/example/repository")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn global_skill_inventory_maps_agent_roots_and_sorts_records() {
+        let root = skill_inventory_test_root("agent-roots");
+        write_test_skill(&root.join(".grok/skills/zeta"), "zeta");
+        write_test_skill(&root.join(".claude/skills/alpha"), "alpha");
+
+        let skills = scan_global_skill_inventory(&root).unwrap();
+
+        assert_eq!(
+            skills
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["alpha", "zeta"]
+        );
+        assert_eq!(skills[0].apps, vec!["claude-code"]);
+        assert_eq!(skills[1].apps, vec!["grok"]);
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn uninstalling_one_skill_installation_preserves_the_duplicate() {
+        let root = skill_inventory_test_root("remove-one");
+        let agents = root.join(".agents/skills/demo");
+        let codex = root.join(".codex/skills/demo");
+        write_test_skill(&agents, "demo");
+        write_test_skill(&codex, "demo");
+        let skill = scan_global_skill_inventory(&root).unwrap().remove(0);
+        let installation = skill
+            .installations
+            .iter()
+            .find(|item| Path::new(&item.path) == codex)
+            .unwrap();
+
+        let remaining =
+            uninstall_skill_installation_at_home(&root, &skill.id, &installation.id).unwrap();
+
+        assert!(agents.join("SKILL.md").is_file());
+        assert!(!codex.exists());
+        assert!(remaining.installed);
+        assert_eq!(remaining.installations.len(), 1);
+        assert_eq!(
+            Path::new(&remaining.installations[0].path),
+            agents.as_path()
+        );
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn uninstalling_skill_directory_link_preserves_its_target() {
+        let root = skill_inventory_test_root("unlink");
+        let target = root.join(".agents/skills/demo");
+        let link = root.join(".codex/skills/demo");
+        write_test_skill(&target, "demo");
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        #[cfg(windows)]
+        if let Err(error) = std::os::windows::fs::symlink_dir(&target, &link) {
+            eprintln!("skipping directory-link test: {}", error);
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        let skill = scan_global_skill_inventory(&root).unwrap().remove(0);
+        let installation = skill
+            .installations
+            .iter()
+            .find(|item| item.is_link)
+            .unwrap();
+
+        uninstall_skill_installation_at_home(&root, &skill.id, &installation.id).unwrap();
+
+        assert!(target.join("SKILL.md").is_file());
+        assert!(fs::symlink_metadata(&link).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn uninstalling_link_target_detaches_the_other_installation() {
+        let root = skill_inventory_test_root("detach-dependent");
+        let target = root.join(".agents/skills/demo");
+        let link = root.join(".codex/skills/demo");
+        write_test_skill(&target, "demo");
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+        #[cfg(windows)]
+        if let Err(error) = std::os::windows::fs::symlink_dir(&target, &link) {
+            eprintln!("skipping directory-link test: {}", error);
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        let skill = scan_global_skill_inventory(&root).unwrap().remove(0);
+        let installation = skill
+            .installations
+            .iter()
+            .find(|item| !item.is_link)
+            .unwrap();
+        let impact =
+            inspect_skill_uninstall_at_home(&root, &skill.id, Some(&installation.id)).unwrap();
+        assert_eq!(impact.dependent_paths.len(), 1);
+        assert_eq!(Path::new(&impact.dependent_paths[0]), link.as_path());
+
+        let remaining =
+            uninstall_skill_installation_at_home(&root, &skill.id, &installation.id).unwrap();
+
+        assert!(!target.exists());
+        assert!(link.join("SKILL.md").is_file());
+        assert!(!fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(remaining.installations.len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_installation_uninstall_rejects_unknown_installation_id() {
+        let root = skill_inventory_test_root("reject-forged");
+        let outside = root.join("outside/demo");
+        write_test_skill(&outside, "demo");
+        write_test_skill(&root.join(".codex/skills/demo"), "demo");
+        let skill = scan_global_skill_inventory(&root).unwrap().remove(0);
+
+        let error = uninstall_skill_installation_at_home(&root, &skill.id, "installation::forged")
+            .unwrap_err();
+
+        assert!(error.contains("未找到安装位置"));
+        assert!(outside.join("SKILL.md").is_file());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn skill_lock_entry_is_removed_only_after_last_installation() {
+        let root = skill_inventory_test_root("lock-cleanup");
+        write_test_skill(&root.join(".agents/skills/demo"), "demo");
+        write_test_skill(&root.join(".codex/skills/demo"), "demo");
+        fs::write(
+            root.join(".agents/.skill-lock.json"),
+            r#"{"version":3,"skills":{"demo":{"source":"fixture"}},"dismissed":{"x":true}}"#,
+        )
+        .unwrap();
+        let skill = scan_global_skill_inventory(&root).unwrap().remove(0);
+
+        uninstall_skill_installation_at_home(&root, &skill.id, &skill.installations[0].id).unwrap();
+        let after_first: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(root.join(".agents/.skill-lock.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(after_first["skills"].get("demo").is_some());
+
+        let remaining = scan_global_skill_inventory(&root).unwrap().remove(0);
+        uninstall_skill_installation_at_home(&root, &remaining.id, &remaining.installations[0].id)
+            .unwrap();
+        let after_last: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(root.join(".agents/.skill-lock.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(after_last["skills"].get("demo").is_none());
+        assert_eq!(after_last["dismissed"]["x"], true);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
     #[test]
     fn skill_target_groups_merge_clients_with_the_same_path() {
         let root = skill_inventory_test_root("target-groups");
@@ -15528,8 +16266,11 @@ mod tests {
                 "--yes",
                 "--global",
                 "--copy",
+<<<<<<< HEAD
                 "--skill",
                 "supabase-postgres-best-practices",
+=======
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
                 "--agent",
                 "codex",
                 "antigravity",
@@ -16769,6 +17510,30 @@ requires_openai_auth = true"#;
     }
 
     #[test]
+    fn traced_client_version_probe_uses_readable_timeout_message() {
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("powershell.exe");
+            command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 5"]);
+            command
+        };
+        #[cfg(unix)]
+        let mut command = {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 5"]);
+            command
+        };
+
+        let result = command_output_with_timeout_traced(
+            &mut command,
+            std::time::Duration::from_millis(40),
+            None,
+        );
+
+        assert_eq!(result.unwrap_err(), "读取客户端版本号超时");
+    }
+
+    #[test]
     fn skills_cli_process_has_a_timeout() {
         #[cfg(windows)]
         let mut command = {
@@ -16862,7 +17627,7 @@ requires_openai_auth = true"#;
                 && attribute.value == telemetry::OtlpAnyValue::String(root.display().to_string())));
         let output = store
             .operation_output(telemetry::OutputQuery {
-                trace_id: summary.trace_id,
+                trace_id: summary.trace_id.clone(),
                 span_id: command_span.span_id.clone(),
                 stream: "stdout".to_string(),
                 offset: Some(0),
@@ -16877,7 +17642,7 @@ requires_openai_auth = true"#;
     }
 
     #[test]
-    fn traced_command_records_full_raw_stdout_result() {
+    fn traced_command_records_one_log_with_full_stdout_and_stderr() {
         let root = env::temp_dir().join(format!(
             "agentdock-command-final-output-{}-{}",
             std::process::id(),
@@ -16912,7 +17677,7 @@ requires_openai_auth = true"#;
             command.args([
                 "-NoProfile",
                 "-Command",
-                "$esc = [char]27; Write-Output 'downloading 10%'; Write-Output \"${esc}[32mDone!${esc}[39m Review skills before use\"",
+                "$esc = [char]27; Write-Output 'downloading 10%'; Write-Output \"${esc}[32mDone!${esc}[39m Review skills before use\"; [Console]::Error.Write('warning')",
             ]);
             command
         };
@@ -16921,7 +17686,7 @@ requires_openai_auth = true"#;
             let mut command = Command::new("sh");
             command.args([
                 "-c",
-                "printf 'downloading 10%\\n\\033[32mDone!\\033[39m Review skills before use\\n'",
+                "printf 'downloading 10%\\n\\033[32mDone!\\033[39m Review skills before use\\n'; printf 'warning' >&2",
             ]);
             command
         };
@@ -16938,6 +17703,7 @@ requires_openai_auth = true"#;
 
         let summary = store.latest_operation().unwrap().unwrap();
         let detail = store.operation_detail(&summary.trace_id).unwrap();
+        assert_eq!(detail.summary.log_count, 1);
         let command_span = detail
             .spans
             .iter()
@@ -16948,7 +17714,7 @@ requires_openai_auth = true"#;
         assert!(preview.contains("[32mDone![39m") || preview.contains("\u{1b}[32mDone!\u{1b}[39m"));
         let output = store
             .operation_output(telemetry::OutputQuery {
-                trace_id: summary.trace_id,
+                trace_id: summary.trace_id.clone(),
                 span_id: command_span.span_id.clone(),
                 stream: "stdout".to_string(),
                 offset: Some(0),
@@ -16958,6 +17724,16 @@ requires_openai_auth = true"#;
         let text = output.text.unwrap();
         assert!(text.contains("downloading 10%"));
         assert!(text.contains("[32mDone![39m") || text.contains("\u{1b}[32mDone!\u{1b}[39m"));
+        let stderr = store
+            .operation_output(telemetry::OutputQuery {
+                trace_id: summary.trace_id,
+                span_id: command_span.span_id.clone(),
+                stream: "stderr".to_string(),
+                offset: Some(0),
+                limit: Some(4096),
+            })
+            .unwrap();
+        assert_eq!(stderr.text.as_deref(), Some("warning"));
 
         drop(detail);
         drop(span);

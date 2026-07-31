@@ -91,7 +91,15 @@ jobs:
             grep -F "\"$APPLE_SIGNING_IDENTITY\""
 
       - name: Build desktop app
-        if: runner.os != 'macOS'
+        if: runner.os != 'macOS' && !startsWith(github.ref, 'refs/tags/v')
+        run: npm run build
+
+      - name: Build desktop release with packaged OTLP configuration
+        if: runner.os != 'macOS' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          AGENTDOCK_OTLP_ENDPOINT: ${{ vars.AGENTDOCK_OTLP_ENDPOINT }}
+          AGENTDOCK_OTLP_TOKEN: ${{ secrets.AGENTDOCK_OTLP_TOKEN }}
+          AGENTDOCK_OTLP_SERVICE_NAME: ${{ vars.AGENTDOCK_OTLP_SERVICE_NAME }}
         run: npm run build
 
       - name: Build universal macOS app
@@ -105,6 +113,9 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          AGENTDOCK_OTLP_ENDPOINT: ${{ vars.AGENTDOCK_OTLP_ENDPOINT }}
+          AGENTDOCK_OTLP_TOKEN: ${{ secrets.AGENTDOCK_OTLP_TOKEN }}
+          AGENTDOCK_OTLP_SERVICE_NAME: ${{ vars.AGENTDOCK_OTLP_SERVICE_NAME }}
         run: npm run build -- --target universal-apple-darwin
 
       - name: Notarize and verify final macOS bundle

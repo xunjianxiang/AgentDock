@@ -692,7 +692,7 @@
         <button data-view-button="mcp" title="MCP"><i data-lucide="blocks"></i><span class="label">MCP</span><span class="nav-count" id="nav-mcp-count">--</span></button>
         <button data-view-button="stats" title="统计"><i data-lucide="chart-no-axes-combined"></i><span class="label">统计</span><span class="nav-count"></span></button>
         <button data-view-button="logs" title="诊断"><i data-lucide="scan-heart"></i><span class="label">诊断</span><span class="nav-count"></span></button>
-        <button data-view-button="operations" title="操作日志"><i data-lucide="square-terminal"></i><span class="label">操作日志</span><span class="nav-count"></span></button>
+        <button data-view-button="operations" title="执行记录"><i data-lucide="list-tree"></i><span class="label">执行记录</span><span class="nav-count"></span></button>
       </nav>
       <div class="rail-bottom"><button class="rail-settings" data-view-button="settings" title="设置" aria-label="打开设置"><i data-lucide="settings"></i></button></div>
     </aside>
@@ -814,8 +814,8 @@
 
         <section class="view" data-view="operations">
           <div class="page-head">
-            <div><h2>操作日志</h2><p>按业务操作查看历史记录、命令输出和本地文件动作</p></div>
-            <div class="actions"><button class="btn primary" data-action="refresh-operation-records"><i data-lucide="refresh-cw"></i>刷新日志</button><button class="icon-btn" data-action="open-data-dir" title="打开数据目录" aria-label="打开数据目录"><i data-lucide="folder-open"></i></button></div>
+            <div><h2>执行记录</h2><p>查看检测、安装和启动等任务的步骤、命令输出与结果</p></div>
+            <div class="actions"><button class="btn primary" id="report-operation-record" data-action="report-operation-record" disabled><i data-lucide="cloud-upload"></i>上报所选</button><button class="btn" data-action="refresh-operation-records"><i data-lucide="refresh-cw"></i>刷新记录</button><button class="icon-btn" data-action="open-data-dir" title="打开数据目录" aria-label="打开数据目录"><i data-lucide="folder-open"></i></button></div>
           </div>
           <section class="operation-records-panel" id="operation-records-panel">
             <div class="operation-record-detail" id="operation-record-detail"></div>
@@ -1059,6 +1059,7 @@
     import { createIcons, icons } from "lucide";
     import { open as openDialog } from "@tauri-apps/plugin-dialog";
     import { EXTENDED_UI_COPY } from "./i18n.js";
+    import { installGlobalExceptionHandlers } from "./exception-telemetry.js";
 
     const APP_META = {
       "claude-code": { name: "Claude Code", short: "CC", logo: "/client-logos/claude-code.svg", autoInstall: true },
@@ -1081,7 +1082,7 @@
       mcp: ["MCP", "服务器和客户端配置"],
       stats: ["统计", "Token、请求和成本趋势"],
       logs: ["诊断", "主动检查客户端、供应商和本机配置"],
-      operations: ["操作日志", "查看历史业务操作、命令输出和本地文件动作"],
+      operations: ["执行记录", "查看任务步骤、命令输出和执行结果"],
       settings: ["设置", "界面、窗口、客户端和 Skills 偏好"]
     };
     const UI_COPY = {
@@ -1298,7 +1299,11 @@
     const state = {
       desktop: Boolean(window.__TAURI_INTERNALS__), status: startupCache?.status || null, settings: { ...defaultSettings, ...(startupCache?.settings || {}), language: defaultSettings.language, theme: defaultSettings.theme }, ready: startupCache?.ready || null, providers: startupCache?.providers || [], skills: startupCache?.skills || [], mcpServers: startupCache?.mcpServers || [], softwareCatalog: startupCache?.softwareCatalog || [], appUpdate: null, appUpdateChecking: false, appUpdateInstalling: false, backgroundRefreshing: false,
       usageStats: null, usageDays: 7, trendMetric: "totalTokens", breakdown: "client",
-      activeView: "clients", activeClient: "codex", contextQuery: "", softwareFilter: "all", skillsWorkspaceView: "discovery", inspectingSkillId: "", uninstalledSkill: null, diagnosticFilter: "all", operationRecords: { items: [], total: 0, page: 0, pageSize: 25 }, operationRecordsLoading: false, operationRecordsAppending: false, operationRecordsError: "", operationCategory: "all", operationState: "all", selectedOperationTraceId: "", selectedOperation: null, selectedOperationLoading: false, selectedOperationOutput: null,
+<<<<<<< HEAD
+      activeView: "clients", activeClient: "codex", contextQuery: "", softwareFilter: "all", skillsWorkspaceView: "discovery", inspectingSkillId: "", uninstalledSkill: null, diagnosticFilter: "all", operationRecords: { items: [], total: 0, page: 0, pageSize: 25 }, operationRecordsLoading: false, operationRecordsAppending: false, operationRecordsError: "", operationCategory: "all", operationState: "all", selectedOperationTraceId: "", selectedOperation: null, selectedOperationLoading: false, selectedOperationOutput: null, operationReporting: false,
+=======
+      activeView: "clients", activeClient: "codex", contextQuery: "", softwareFilter: "all", skillsWorkspaceView: "discovery", inspectingSkillId: "", uninstalledSkill: null, diagnosticFilter: "all",
+>>>>>>> fd295faf9f26ec33df5ed431ac6234a51ac0abc1
       skillsDiscovery: null, skillsDiscoveryView: "all-time", skillsDiscoveryQuery: "", skillsDiscoveryLoading: false, skillsDiscoveryPages: {}, skillTargetGroups: {}, skillFileViews: {},
       inFlightOperations: new Set(), clientOperations: new Map(), launchingClients: new Set(), workspaceMenuOpen: false, providerModelMenuOpen: false, providerModelOptions: [], providerModelRequest: 0, providerReadyRequest: 0, settingsRevision: 0, settingsSaveChain: Promise.resolve(), logs: [], diagnostics: null, diagnosticRunning: false, ccSwitchImport: null, ccSwitchImportResult: null, ccSwitchImportChecking: false, editingProviderId: null, selectedPresetId: "custom", providerFormDirty: false, providerSecretRequest: 0, editingMcpId: null, selectedMcpPreset: "custom", inspectingMcpId: null, mcpToolsResult: null, mcpToolsError: "", activeMcpToolName: "", mcpToolsRequest: 0, configManuallyEdited: false, configImportRequest: 0, confirmResolve: null, skillInstallDraft: null
     };
@@ -1514,6 +1519,7 @@
         ] };
       }
       if (command === "get_operation_output") return { traceId: args.query.traceId, spanId: args.query.spanId, stream: args.query.stream, offset: args.query.offset || 0, limit: args.query.limit || 65536, totalBytes: 58, text: "skills install review\nInstalled into /Users/demo/.agents/skills\n", bytesBase64: null };
+      if (command === "report_operation_record") return { uploaded: true, queued: false, message: "执行记录已上报" };
       if (command === "list_providers") return structuredClone(mock.providers);
       if (command === "get_provider_api_key") return mock.providers.some((item) => item.id === args.providerId && item.apiKeyConfigured) ? "sk-preview-saved-key" : "";
       if (command === "save_provider") {
@@ -1599,6 +1605,9 @@
       throw new Error(`预览模式未实现命令: ${command}`);
     }
     const call = (command, args) => state.desktop ? invoke(command, args) : mockInvoke(command, args);
+    if (state.desktop) {
+      installGlobalExceptionHandlers((input) => invoke("record_frontend_exception", { input }));
+    }
 
     function tr(key, fallback) {
       return UI_COPY[activeLocale()]?.[key] || fallback;
@@ -1649,7 +1658,7 @@
     }
 
     function localizeUi() {
-      const navFallback = { clients: "客户端", software: "推荐软件", skills: "Skills", mcp: "MCP", stats: "统计", logs: "诊断", operations: "操作日志" };
+      const navFallback = { clients: "客户端", software: "推荐软件", skills: "Skills", mcp: "MCP", stats: "统计", logs: "诊断", operations: "执行记录" };
       for (const [view, fallback] of Object.entries(navFallback)) {
         const label = tr(`nav.${view}`, fallback); const button = document.querySelector(`[data-view-button="${view}"]`);
         setText(`[data-view-button="${view}"] .label`, label); if (button) button.title = label;
@@ -1663,7 +1672,7 @@
         mcp: [tr("page.mcp.title", "MCP 服务器"), tr("page.mcp.desc", "统一管理服务器，并同步到各客户端的真实配置文件")],
         stats: [tr("page.stats.title", "用量统计"), tr("page.stats.desc", "汇总本机客户端会话中的 Token、请求和可计算成本")],
         logs: [tr("page.logs.title", "诊断中心"), tr("page.logs.desc", "检查本机目录、客户端、供应商连接、MCP 和统计数据，不读取或展示密钥")],
-        operations: [tr("page.operations.title", "操作日志"), tr("page.operations.desc", "按业务操作查看历史记录、命令输出和本地文件动作")],
+        operations: [tr("page.operations.title", "执行记录"), tr("page.operations.desc", "查看检测、安装和启动等任务的步骤、命令输出与结果")],
         settings: [tr("settings.title", "设置"), tr("settings.subtitle", "调整 AgentDock 的界面、窗口、客户端和 Skills 行为")]
       };
       for (const [view, [title, description]] of Object.entries(pageCopy)) { setText(`.view[data-view="${view}"] .page-head h2`, title); setText(`.view[data-view="${view}"] .page-head p`, description); }
@@ -2027,11 +2036,11 @@
         mcp: [tr("page.mcp.title", "MCP 服务器"), trf("count.enabled", "{count} 个已启用", { count: state.mcpServers.filter((server) => server.enabled).length }), "plus", tr("添加 MCP 服务器", "添加 MCP 服务器")],
         stats: [tr("nav.stats", "统计"), trf("range.days", "近 {days} 天", { days: state.usageDays }), "refresh-cw", tr("刷新统计", "刷新统计")],
         logs: [tr("nav.logs", "诊断"), state.diagnostics ? trf("count.checks", "{count} 项检查", { count: state.diagnostics.checks.length }) : tr("尚未检测", "尚未检测"), "scan-heart", tr("重新运行诊断", "重新运行诊断")],
-        operations: [tr("nav.operations", "操作日志"), trf("logs.count", "{shown}/{total} 条", { shown: state.operationRecords.items.length, total: state.operationRecords.total || state.operationRecords.items.length }), "refresh-cw", tr("刷新操作日志", "刷新操作日志")],
+        operations: [tr("nav.operations", "执行记录"), trf("logs.count", "{shown}/{total} 条", { shown: state.operationRecords.items.length, total: state.operationRecords.total || state.operationRecords.items.length }), "refresh-cw", tr("刷新执行记录", "刷新执行记录")],
         settings: [tr("nav.settings", "设置"), tr("source.general", "通用"), "refresh-cw", tr("重新读取设置", "重新读取设置")]
       }[state.activeView];
       title.textContent = sourceAction[0]; summary.textContent = sourceAction[1]; action.title = sourceAction[3]; action.setAttribute("aria-label", sourceAction[3]); action.innerHTML = `<i data-lucide="${sourceAction[2]}"></i>`;
-      const searchEnabled = !["stats", "settings"].includes(state.activeView); search.disabled = !searchEnabled; searchShell.classList.toggle("disabled", !searchEnabled); search.placeholder = state.activeView === "logs" ? tr("search.logs", "搜索诊断项") : state.activeView === "operations" ? tr("search.operations", "搜索操作日志") : state.activeView === "mcp" ? tr("search.mcp", "搜索服务器") : tr("search.filter", "筛选当前列表"); search.setAttribute("aria-label", search.placeholder);
+      const searchEnabled = !["stats", "settings"].includes(state.activeView); search.disabled = !searchEnabled; searchShell.classList.toggle("disabled", !searchEnabled); search.placeholder = state.activeView === "logs" ? tr("search.logs", "搜索诊断项") : state.activeView === "operations" ? tr("search.operations", "搜索执行记录") : state.activeView === "mcp" ? tr("search.mcp", "搜索服务器") : tr("search.filter", "筛选当前列表"); search.setAttribute("aria-label", search.placeholder);
       if (state.activeView === "clients") {
         const detecting = !state.status;
         const clients = visibleClientIds().map((id) => ({ id, meta: clientMeta(id), client: state.status?.clients.find((item) => item.id === id), catalog: state.softwareCatalog.find((item) => item.clientId === id) })).filter(({ id, meta }) => contextMatches(id, meta.name));
@@ -2059,7 +2068,7 @@
         const total = state.operationRecords.total || records.length;
         const hasMore = records.length < total;
         const more = hasMore ? `<button class="source-filter operation-load-more" data-action="load-more-operation-records"><i class="${state.operationRecordsAppending ? "spin" : ""}" data-lucide="${state.operationRecordsAppending ? "loader-circle" : "chevrons-down"}"></i><span>${state.operationRecordsAppending ? tr("正在加载更多", "正在加载更多") : tr("加载更多", "加载更多")}</span><b>${records.length}/${total}</b></button>` : records.length ? `<div class="source-empty compact"><i data-lucide="check-check"></i>${tr("已显示全部操作", "已显示全部操作")}</div>` : "";
-        list.innerHTML = `<div class="source-group-label">${tr("操作状态", "操作状态")}</div>${sourceFilterButton("all", "Any state", "list-checks", records.length, state.operationState === "all", "set-operation-state")}${sourceFilterButton("success", "Success", "circle-check", undefined, state.operationState === "success", "set-operation-state")}${sourceFilterButton("error", "Error", "circle-x", undefined, state.operationState === "error", "set-operation-state")}<div class="source-rule"></div><div class="source-group-label"><span>${tr("历史操作", "历史操作")}</span><b>${records.length}/${total}</b></div>${state.operationRecordsLoading && !records.length ? `<div class="source-empty"><i class="spin" data-lucide="loader-circle"></i>${tr("正在加载操作日志", "正在加载操作日志")}</div>` : state.operationRecordsError ? `<div class="source-empty"><i data-lucide="circle-alert"></i>${escapeHtml(state.operationRecordsError)}</div>` : rows ? `${rows}${more}` : `<div class="source-empty"><i data-lucide="database"></i>${tr("还没有历史操作", "还没有历史操作")}</div>`}`;
+        list.innerHTML = `<div class="source-group-label">${tr("执行状态", "执行状态")}</div>${sourceFilterButton("all", "Any state", "list-checks", records.length, state.operationState === "all", "set-operation-state")}${sourceFilterButton("success", "Success", "circle-check", undefined, state.operationState === "success", "set-operation-state")}${sourceFilterButton("error", "Error", "circle-x", undefined, state.operationState === "error", "set-operation-state")}<div class="source-rule"></div><div class="source-group-label"><span>${tr("历史执行", "历史执行")}</span><b>${records.length}/${total}</b></div>${state.operationRecordsLoading && !records.length ? `<div class="source-empty"><i class="spin" data-lucide="loader-circle"></i>${tr("正在加载执行记录", "正在加载执行记录")}</div>` : state.operationRecordsError ? `<div class="source-empty"><i data-lucide="circle-alert"></i>${escapeHtml(state.operationRecordsError)}</div>` : rows ? `${rows}${more}` : `<div class="source-empty"><i data-lucide="database"></i>${tr("还没有执行记录", "还没有执行记录")}</div>`}`;
       } else if (state.activeView === "settings") {
         list.innerHTML = `<div class="source-group-label">${tr("source.settingsCategory", "设置分类")}</div><button class="source-filter active" aria-current="page"><i data-lucide="sliders-horizontal"></i><span>${tr("source.general", "通用")}</span></button><div class="source-rule"></div><div class="source-empty"><i data-lucide="cloud-check"></i>${tr("source.settingsHint", "通用设置会自动保存到本机")}</div>`;
       } else {
@@ -2683,6 +2692,12 @@
     }
     function renderOperationRecords() {
       const panel = document.getElementById("operation-records-panel"); if (!panel) return;
+      const reportButton = document.getElementById("report-operation-record");
+      if (reportButton) {
+        const running = state.selectedOperation?.summary?.state === "running";
+        reportButton.disabled = !state.selectedOperationTraceId || state.selectedOperationLoading || state.operationReporting || running;
+        reportButton.title = running ? "执行完成后才能上报" : state.selectedOperationTraceId ? "将当前执行记录上报到 OpenTelemetry" : "请先选择一条执行记录";
+      }
       document.querySelectorAll('[data-action="set-operation-category"]').forEach((button) => button.classList.toggle("active", button.dataset.id === state.operationCategory));
       document.querySelectorAll('[data-action="set-operation-state"]').forEach((button) => button.classList.toggle("active", button.dataset.id === state.operationState));
       const detail = document.getElementById("operation-record-detail");
@@ -2840,6 +2855,19 @@
       try { state.selectedOperation = await call("get_operation_record", { traceId }); }
       catch (error) { state.selectedOperation = null; state.operationRecordsError = errorText(error); }
       finally { state.selectedOperationLoading = false; renderOperationRecords(); renderSourceSidebar(); }
+    }
+    async function reportSelectedOperation() {
+      const traceId = state.selectedOperationTraceId;
+      if (!traceId || state.operationReporting) return;
+      state.operationReporting = true; renderOperationRecords();
+      try {
+        const result = await call("report_operation_record", { traceId });
+        notify(result.message, result.uploaded ? "ok" : "error");
+        await refreshOperationRecords();
+        if (state.selectedOperationTraceId === traceId) await loadOperationRecord(traceId);
+      } finally {
+        state.operationReporting = false; renderOperationRecords();
+      }
     }
     async function loadOperationOutput(spanId, stream) {
       if (!state.selectedOperationTraceId) return;
@@ -3446,6 +3474,7 @@
       if (action === "set-operation-category") { state.operationCategory = id; state.operationRecords.page = 0; state.selectedOperationTraceId = ""; state.selectedOperation = null; renderOperationRecords(); return refreshOperationRecords(); }
       if (action === "set-operation-state") { state.operationState = id; state.operationRecords.page = 0; state.selectedOperationTraceId = ""; state.selectedOperation = null; renderOperationRecords(); return refreshOperationRecords(); }
       if (action === "refresh-operation-records") return withBusy(button, refreshOperationRecords);
+      if (action === "report-operation-record") return withBusy(button, reportSelectedOperation);
       if (action === "load-more-operation-records") return withBusy(button, loadMoreOperationRecords);
       if (action === "select-operation-record") return loadOperationRecord(id);
       if (action === "load-operation-output") return withBusy(button, () => loadOperationOutput(id, button.dataset.stream));
